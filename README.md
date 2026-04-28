@@ -8,6 +8,8 @@ A deep-space nebula fly-through rendered entirely in GLSL on the GPU. Wispy viol
 
 85-90% of pixels are true black at any given moment, peak brightness is ~18%, and no static elements persist in one location, making this both a true “screen saver” and “energy saver” for OLED displays.
 
+https://github.com/user-attachments/assets/ab4c6c4d-fd2b-4cda-ba56-5b4635432d5f
+
 ## Technical approach
 
 - **Single full-screen quad** — all rendering happens in one fragment shader, zero CPU geometry work per frame
