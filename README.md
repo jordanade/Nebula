@@ -4,7 +4,9 @@ A GPU-accelerated nebula fly-through screensaver for Android TV and NVIDIA Shiel
 
 ## What it looks like
 
-A deep-space nebula fly-through rendered entirely in GLSL on the GPU. Wispy violet/indigo filaments drift through a starfield as you continuously zoom inward — new detail perpetually emerging from the center. Runs smoothly on a 2017 NVIDIA Shield (Tegra X1).
+A deep-space nebula fly-through rendered entirely in GLSL on the GPU. Wispy violet/indigo filaments drift through a starfield as you continuously zoom inward — new detail perpetually emerging from the center. Runs smoothly on a NVIDIA Shield (Tegra X1).
+
+85-90% of pixels are true black at any given moment, peak brightness is ~18%, and no static elements persist in one location, making this both a true “screen saver” and “energy saver” for OLED displays.
 
 ## Technical approach
 
