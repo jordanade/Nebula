@@ -35,11 +35,18 @@ adb shell settings put secure screensaver_default_component com.nebula/.NebulaDr
 adb shell settings put secure screensaver_enabled 1
 ```
 
-Set idle timeout (milliseconds):
+Set screensaver start time (milliseconds):
 
 ```bash
-# 10 minutes
-adb shell settings put system screen_off_timeout 600000
+# 5 minutes
+adb shell settings put system screen_off_timeout 300000
+```
+
+Set screen power off time (milliseconds):
+
+```bash
+# 20 minutes
+adb shell settings put secure sleep_timeout 1200000
 ```
 
 Trigger immediately for testing:
