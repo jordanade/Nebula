@@ -8,7 +8,7 @@ A subtle deep-space nebula fly-through rendered entirely in GLSL on the GPU. Wis
 
 85-90% of pixels are true black at any given moment, peak brightness is ~18%, and no static elements persist in one location, making this both a true “screen saver” and “energy saver” for OLED displays.
 
-https://github.com/user-attachments/assets/ab4c6c4d-fd2b-4cda-ba56-5b4635432d5f
+https://github.com/user-attachments/assets/34a24eed-c80d-4c38-893d-c32da806e17a
 
 ## Technical approach
 
