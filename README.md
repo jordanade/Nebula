@@ -4,20 +4,21 @@ A GPU-accelerated nebula fly-through screensaver for Android TV. Vibe coded with
 
 ## What it looks like
 
-A subtle deep-space nebula fly-through rendered entirely in GLSL on the GPU. Wispy violet/indigo filaments drift through a starfield as you continuously zoom inward — new detail perpetually emerging from the center. Runs smoothly on a NVIDIA Shield (Tegra X1).
+A deep-space nebula fly-through rendered entirely in GLSL on the GPU. Wispy violet/indigo filaments drift through a starfield as you continuously zoom inward — new detail perpetually emerging from the center. Runs smoothly on a NVIDIA Shield.
 
-85-90% of pixels are true black at any given moment, peak brightness is ~18%, and no static elements persist in one location, making this both a true “screen saver” and “energy saver” for OLED displays.
+Designed for OLED displays — the majority of pixels remain black at any given moment, with filaments and hot spots occupying a minority of the frame. All elements are in continuous motion.
 
 https://github.com/user-attachments/assets/34a24eed-c80d-4c38-893d-c32da806e17a
 
 ## Technical approach
 
 - **Single full-screen quad** — all rendering happens in one fragment shader, zero CPU geometry work per frame
-- **Ridged FBM** — `1 - |noise|` per octave produces sharp filament ridges rather than smooth blobs; domain-warped for organic curves
-- **Scale-space fractal zoom** — two octave-spaced samples of the same noise field crossfaded as zoom progresses; new detail continuously emerges without position jumps or resets
-- **Three-phase star system** — staggered radial zoom layers with symmetric fade-in/out; no visible reset ever
-- **GLES 2.0** — compatible with any Android TV device; `highp` precision throughout prevents coordinate overflow artifacts
-- **Burn-in safe** — compound sinusoidal drift ensures no pixel is ever static; star layers independently drift
+- **Zero-contour filaments** — `exp(-|sfbm(p)| * k)` produces a narrow brightness spike wherever smooth FBM crosses zero; five independent noise fields at different scales and offsets create an overlapping network of thin threads against true black, with per-filament color variation (violet, indigo-blue, magenta-rose) based on which field dominates at each pixel
+- **Scale-space fractal zoom** — rotation applied after scaling ensures `pB(t=1) = pA(t=0)` exactly at every octave boundary; new detail continuously elaborates on visible structure with no position jumps, resets, or crossfade artifacts
+- **Three-phase star system** — staggered radial zoom layers with symmetric smoothstep fade-in/out; any single layer's reset is covered by the other two
+- **GLES 2.0** — compatible with any Android TV device; `highp` precision throughout prevents coordinate overflow artifacts at deep zoom levels
+- **Shared noise computation** — all five FBM values computed once per pixel and reused for both filament brightness and color, halving noise evaluation cost vs naïve implementation
+- **Burn-in safe** — dual-axis coordinate rotation plus continuous inward zoom guarantees no pixel holds a static value; filaments, hot spots, and stars are all in perpetual motion
 
 ## Install
 
