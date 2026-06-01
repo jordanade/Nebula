@@ -1,5 +1,8 @@
 obj/
 bin/
+screencaps/
+/Nebula.apk
 *.class
 *.dex
 *.keystore
+.claude/settings.local.json

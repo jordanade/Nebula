@@ -58,30 +58,70 @@ adb shell am start -n com.android.systemui/.Somnambulator
 
 ## Build from source
 
-No Android Studio required. Needs `javac`, `dx`, `aapt`, `zipalign`, `apksigner` from the Android SDK build tools and `android-23` platform jar.
+No Android Studio required. The checked-in build script compiles the Java source, packages the existing manifest, zipaligns the APK, and writes `Nebula.apk`.
+
+On macOS, the easiest setup is Homebrew plus the Android command-line tools. `sdkmanager` needs JDK 17 or later:
 
 ```bash
-ANDROID_JAR=/path/to/android-23/android.jar
-DX=/path/to/build-tools/dx
-AAPT=/path/to/build-tools/aapt
-ZIPALIGN=/path/to/build-tools/zipalign
-APKSIGNER=/path/to/build-tools/apksigner
+brew install --cask temurin@17
+brew install --cask android-commandlinetools
 
-mkdir -p obj bin
+export JAVA_HOME=$(/usr/libexec/java_home -v 17)
+export PATH="$JAVA_HOME/bin:$PATH"
 
-javac -source 8 -target 8 -bootclasspath $ANDROID_JAR \
-    -d obj src/com/nebula/NebulaDream.java
+mkdir -p "$HOME/Library/Android/sdk"
 
-$DX --dex --output=bin/classes.dex obj/
+yes | sdkmanager --sdk_root="$HOME/Library/Android/sdk" \
+    "platform-tools" \
+    "platforms;android-23" \
+    "build-tools;30.0.3"
+```
 
-$AAPT package -f -F bin/nebula.unaligned.apk \
-    -M AndroidManifest.xml -I $ANDROID_JAR
-cd bin && zip -j nebula.unaligned.apk classes.dex && cd ..
+Build tools `30.0.3` are known to work because they still include `dx`.
 
-$ZIPALIGN -f 4 bin/nebula.unaligned.apk bin/nebula.aligned.apk
+```bash
+ANDROID_HOME="$HOME/Library/Android/sdk"
+./build.sh
+```
 
-$APKSIGNER sign --ks your.keystore \
-    --out bin/Nebula.apk bin/nebula.aligned.apk
+You can also point the script at explicit SDK tools:
+
+```bash
+ANDROID_JAR="$HOME/Library/Android/sdk/platforms/android-23/android.jar" \
+AAPT="$HOME/Library/Android/sdk/build-tools/30.0.3/aapt" \
+DX="$HOME/Library/Android/sdk/build-tools/30.0.3/dx" \
+ZIPALIGN="$HOME/Library/Android/sdk/build-tools/30.0.3/zipalign" \
+APKSIGNER="$HOME/Library/Android/sdk/build-tools/30.0.3/apksigner" \
+./build.sh
+```
+
+By default, the script creates `debug.keystore` and debug-signs `Nebula.apk`. To release-sign it, provide a keystore:
+
+```bash
+RELEASE_KEYSTORE=/path/to/release.keystore \
+RELEASE_KEY_ALIAS=release \
+RELEASE_KEYSTORE_PASS=secret \
+RELEASE_KEY_PASS=secret \
+./build.sh
+```
+
+For an unsigned APK:
+
+```bash
+SIGNING_MODE=unsigned ./build.sh
+```
+
+Install a locally built APK:
+
+```bash
+adb install --no-incremental -r Nebula.apk
+```
+
+If Android reports `INSTALL_FAILED_UPDATE_INCOMPATIBLE`, the installed copy was signed with a different key. Uninstall it first, then install the new build:
+
+```bash
+adb uninstall com.nebula
+adb install --no-incremental Nebula.apk
 ```
 
 ## Compatibility
