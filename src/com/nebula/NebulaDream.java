@@ -125,14 +125,14 @@ public class NebulaDream extends DreamService {
             "  vec2  p0=(uv-0.5)*vec2(aspect,1.0);\n" +
 
             // slowT drives writhing
-            "  float slowT=uTime*0.055;\n" +
+            "  float slowT=uTime*0.028;\n" +
 
             // ── SCALE-SPACE FRACTAL ZOOM — guaranteed no jump ─────────────────
             // Rotation applied AFTER scale, same matrix for pA and pB.
             // pB=pA*2 in pre-rotation space → pB(t=1)=pA_new(t=0) exactly.
             // Always zooms toward screen center so filament structure always
             // elaborates on whatever is currently centred on screen.
-            "  float zSpd=0.018;\n" +
+            "  float zSpd=0.030;\n" +
             "  float t=fract(uTime*zSpd);\n" +
             "  float S=0.50;\n" +
             "  float zoom=exp(t*0.693);\n" +
@@ -146,7 +146,7 @@ public class NebulaDream extends DreamService {
             "  vec2 pA=vec2(ca2*rA.x-sa2*rA.y,sa2*rA.x+ca2*rA.y);\n" +
             "  vec2 rB=vec2(ca1*pBs.x-sa1*pBs.y,sa1*pBs.x+ca1*pBs.y);\n" +
             "  vec2 pB=vec2(ca2*rB.x-sa2*rB.y,sa2*rB.x+ca2*rB.y);\n" +
-            "  float blend=smoothstep(0.15,0.85,t);\n" +
+            "  float blend=t;\n" +
 
             // Compute noise for BOTH octaves, crossfade
             "  float n1a=sfbm(pA),       n1b=sfbm(pB);\n" +

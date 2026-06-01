@@ -2,6 +2,7 @@ obj/
 bin/
 screencaps/
 /Nebula.apk
+/Nebula.apk.idsig
 *.class
 *.dex
 *.keystore
