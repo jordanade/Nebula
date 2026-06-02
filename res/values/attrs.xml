@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <declare-styleable name="SliderPreference">
+        <!-- Integer range stored in SharedPreferences. -->
+        <attr name="sliderMin" format="integer" />
+        <attr name="sliderMax" format="integer" />
+        <attr name="sliderStep" format="integer" />
+        <!-- Display = storedValue * sliderScale, with optional suffix. -->
+        <attr name="sliderScale" format="float" />
+        <attr name="sliderSuffix" format="string" />
+    </declare-styleable>
+</resources>

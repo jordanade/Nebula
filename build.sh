@@ -52,16 +52,29 @@ requireExec "$AAPT" AAPT
 requireExec "$DX" DX
 requireExec "$ZIPALIGN" ZIPALIGN
 
-rm -rf "$obj_dir" "$bin_dir"
+gen_dir=gen
+rm -rf "$obj_dir" "$bin_dir" "$gen_dir"
 mkdir -p "$obj_dir" "$bin_dir"
 
+# Resources are optional. If res/ exists, generate R.java and include the
+# resource table when packaging; otherwise fall back to a manifest-only APK.
+res_args=""
+if [ -d res ]; then
+    mkdir -p "$gen_dir"
+    "$AAPT" package -f -m -J "$gen_dir" -S res -M AndroidManifest.xml -I "$ANDROID_JAR"
+    res_args="-S res"
+fi
+
+# Compile every .java under src/ (and generated R.java) in one pass.
+find src "$gen_dir" -name '*.java' 2>/dev/null > "$bin_dir/sources.txt"
 "$javac_bin" -encoding UTF-8 -source 8 -target 8 -bootclasspath "$ANDROID_JAR" \
-    -d "$obj_dir" src/com/nebula/NebulaDream.java
+    -d "$obj_dir" @"$bin_dir/sources.txt"
 
 "$DX" --dex --output="$bin_dir/classes.dex" "$obj_dir/"
 
+# shellcheck disable=SC2086
 "$AAPT" package -f -F "$bin_dir/nebula.unaligned.apk" \
-    -M AndroidManifest.xml -I "$ANDROID_JAR"
+    -M AndroidManifest.xml $res_args -I "$ANDROID_JAR"
 zip -q -j "$bin_dir/nebula.unaligned.apk" "$bin_dir/classes.dex"
 
 "$ZIPALIGN" -f 4 "$bin_dir/nebula.unaligned.apk" "$bin_dir/nebula.aligned.apk"

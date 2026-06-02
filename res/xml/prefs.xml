@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="utf-8"?>
+<PreferenceScreen xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto">
+
+    <PreferenceCategory android:title="@string/cat_quality">
+
+        <ListPreference
+            android:key="hdr_mode"
+            android:title="@string/pref_hdr_title"
+            android:summary="%s"
+            android:entries="@array/hdr_mode_entries"
+            android:entryValues="@array/hdr_mode_values"
+            android:defaultValue="auto" />
+
+        <!-- Render resolution: 50–100% of panel resolution. -->
+        <com.nebula.SliderPreference
+            android:key="render_scale"
+            android:title="@string/pref_render_scale_title"
+            android:dialogTitle="@string/pref_render_scale_title"
+            android:defaultValue="75"
+            app:sliderMin="50"
+            app:sliderMax="100"
+            app:sliderStep="5"
+            app:sliderScale="1.0"
+            app:sliderSuffix="%" />
+
+        <ListPreference
+            android:key="frame_cap"
+            android:title="@string/pref_frame_cap_title"
+            android:summary="%s"
+            android:entries="@array/frame_cap_entries"
+            android:entryValues="@array/frame_cap_values"
+            android:defaultValue="30" />
+
+    </PreferenceCategory>
+
+    <PreferenceCategory android:title="@string/cat_motion">
+
+        <!-- Zoom speed on a 1–10 scale (4 = default). Scales nebula + star
+             zoom together, preserving their ratio. -->
+        <com.nebula.SliderPreference
+            android:key="zoom_speed"
+            android:title="@string/pref_zoom_title"
+            android:dialogTitle="@string/pref_zoom_title"
+            android:defaultValue="4"
+            app:sliderMin="1"
+            app:sliderMax="10"
+            app:sliderStep="1"
+            app:sliderScale="1.0" />
+
+        <!-- Writhe speed on a 1–10 scale (4 = default). -->
+        <com.nebula.SliderPreference
+            android:key="writhe_speed"
+            android:title="@string/pref_writhe_title"
+            android:dialogTitle="@string/pref_writhe_title"
+            android:defaultValue="4"
+            app:sliderMin="1"
+            app:sliderMax="10"
+            app:sliderStep="1"
+            app:sliderScale="1.0" />
+
+    </PreferenceCategory>
+
+</PreferenceScreen>

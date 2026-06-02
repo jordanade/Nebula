@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- HDR output mode -->
+    <string-array name="hdr_mode_entries">
+        <item>Auto (use HDR if the display supports it)</item>
+        <item>On (force HDR)</item>
+        <item>Off (SDR only)</item>
+    </string-array>
+    <string-array name="hdr_mode_values">
+        <item>auto</item>
+        <item>on</item>
+        <item>off</item>
+    </string-array>
+
+    <!-- Frame rate cap (fps; 0 = uncapped) -->
+    <string-array name="frame_cap_entries">
+        <item>30 fps (lowest load)</item>
+        <item>60 fps</item>
+        <item>Uncapped</item>
+    </string-array>
+    <string-array name="frame_cap_values">
+        <item>30</item>
+        <item>60</item>
+        <item>0</item>
+    </string-array>
+</resources>
