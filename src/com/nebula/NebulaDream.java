@@ -166,6 +166,7 @@ public class NebulaDream extends DreamService {
             "}\n";
 
         private static final String FRAG =
+            "#extension GL_OES_standard_derivatives : enable\n" +
             "#ifdef GL_FRAGMENT_PRECISION_HIGH\n" +
             "  precision highp float;\n" +
             "#else\n" +
@@ -200,12 +201,12 @@ public class NebulaDream extends DreamService {
             "             mix(h1(i+vec2(0,1)),h1(i+vec2(1,1)),u.x),u.y);\n" +
             "}\n" +
 
-            // ── Smooth FBM — 4 octaves (was 5) ───────────────────────────────
+            // ── Smooth FBM — 6 octaves for finer, more turbulent filaments ───
             "float sfbm(vec2 p){\n" +
             "  float v=0.0,a=0.55;\n" +
             "  mat2 rot=mat2(0.8,-0.6,0.6,0.8);\n" +
-            "  for(int i=0;i<4;i++){\n" +
-            "    v+=a*(vn(p)*2.0-1.0); p=rot*p*2.0; a*=0.5;\n" +
+            "  for(int i=0;i<6;i++){\n" +
+            "    v+=a*(vn(p)*2.0-1.0); p=rot*p*2.0; a*=0.52;\n" +
             "  }\n" +
             "  return v;\n" +
             "}\n" +
@@ -250,7 +251,8 @@ public class NebulaDream extends DreamService {
             "  float thresh=0.99-dens*0.55;\n" +
             "  float h=h1(cell);\n" +
             "  if(h>thresh){\n" +
-            "    float d=length(f-h2(cell+3.7));\n" +
+            "    vec2 df=f-h2(cell+3.7);\n" +
+            "    float d=length(df);\n" +
             // Base magnitude skewed dim: most stars are faint, a few brighter.
             "    float mag=0.18+0.82*pow(h1(cell+7.7),3.0);\n" +
             // Rare, brief flare. Per-star rate + phase tied to uTime so DIFFERENT
@@ -260,7 +262,7 @@ public class NebulaDream extends DreamService {
             // Noise-driven (aperiodic) timing so flares appear at irregular,
             // non-repeating moments rather than on a fixed cycle.
             "    float sid=h1(cell+1.9);\n" +
-            "    float ft=uTime*(0.10+0.20*h1(cell+5.3))+sid*40.0;\n" +
+            "    float ft=uTime*(0.012+0.025*h1(cell+5.3))+sid*40.0;\n" +
             "    float flare=canFlare*smoothstep(0.88,1.0,vn(vec2(ft,sid*23.0)));\n" +
             "    float bri=mag+flare*flare*3.5;\n" +
             // Soften (widen) stars by how fast they stream (distance from centre)
@@ -269,9 +271,30 @@ public class NebulaDream extends DreamService {
             "    float soft=1.0+rad*rad*16.0;\n" +
             "    float core=exp(-d*d*2500.0/soft)*bri;\n" +
             "    float halo=exp(-d*d*100.0)*mag*0.15;\n" +
-            "    return starCol(h1(cell+9.1))*(core+halo);\n" +
+            // Diffraction spikes (4-point cross), scaled by brightness so only
+            // the bright/flaring stars show them — the astrophoto signature look.
+            "    float spH=exp(-df.y*df.y*5000.0)*exp(-df.x*df.x*45.0);\n" +
+            "    float spV=exp(-df.x*df.x*5000.0)*exp(-df.y*df.y*45.0);\n" +
+            "    float spike=(spH+spV)*bri*bri*0.18;\n" +
+            "    return starCol(h1(cell+9.1))*(core+halo+spike);\n" +
             "  }\n" +
             "  return vec3(0.0);\n" +
+            "}\n" +
+
+            // ── Cheap parallax nebula layer (a depth plane). Own seamless
+            // crossfade; zoom rate `spd` sets its depth (slower = deeper).
+            "vec3 nebLayer(vec2 q0,float spd,float scl,vec3 c1,vec3 c2,float bri){\n" +
+            "  float tF=fract(uTime*spd);\n" +
+            "  float zf=exp(tF*0.693);\n" +
+            "  float cyc=floor(uTime*spd);\n" +
+            "  vec2 oA=cyc*vec2(0.04,0.03), oB=(cyc+1.0)*vec2(0.04,0.03);\n" +
+            "  vec2 pa=q0/zf*scl+oA, pb=q0/zf*scl*2.0+oB;\n" +
+            "  float a1=sfbm(pa), a2=sfbm(pa*1.8+vec2(4.0,2.0));\n" +
+            "  float b1=sfbm(pb), b2=sfbm(pb*1.8+vec2(4.0,2.0));\n" +
+            "  float da=exp(-abs(a1)*15.0)*0.6+exp(-abs(a2)*22.0)*0.4;\n" +
+            "  float db=exp(-abs(b1)*15.0)*0.6+exp(-abs(b2)*22.0)*0.4;\n" +
+            "  float dd=pow(clamp(mix(da,db,tF),0.0,1.0),1.7);\n" +
+            "  return mix(c1,c2,vn(pa*0.6))*dd*dd*bri;\n" +
             "}\n" +
 
             "void main(){\n" +
@@ -283,10 +306,6 @@ public class NebulaDream extends DreamService {
             "  float slowT=uTime*uWrithe;\n" +
 
             // ── SCALE-SPACE FRACTAL ZOOM — guaranteed no jump ─────────────────
-            // Rotation applied AFTER scale, same matrix for pA and pB.
-            // pB=pA*2 in pre-rotation space → pB(t=1)=pA_new(t=0) exactly.
-            // Always zooms toward screen center so filament structure always
-            // elaborates on whatever is currently centred on screen.
             "  float zSpd=0.040*uZoom;\n" +
             "  float t=fract(uTime*zSpd);\n" +
             "  float S=0.50;\n" +
@@ -297,11 +316,6 @@ public class NebulaDream extends DreamService {
             "  float ang2=slowT*0.16;\n" +
             "  float ca1=cos(ang1),sa1=sin(ang1);\n" +
             "  float ca2=cos(ang2),sa2=sin(ang2);\n" +
-            // Per-cycle offset so the zoom slowly drifts into NEW noise instead
-            // of looping. Kept SMALL so consecutive cycles are nearly identical
-            // (gentle evolution over many cycles, not a churn within each cycle).
-            // offB is one cycle ahead of offA, preserving the seamless handover:
-            // pB at t=1 == pA at t=0 of the next cycle.
             "  float cyc=floor(uTime*zSpd);\n" +
             "  vec2 offA=cyc*vec2(0.05,0.037);\n" +
             "  vec2 offB=(cyc+1.0)*vec2(0.05,0.037);\n" +
@@ -309,56 +323,56 @@ public class NebulaDream extends DreamService {
             "  vec2 pA=vec2(ca2*rA.x-sa2*rA.y,sa2*rA.x+ca2*rA.y)+offA;\n" +
             "  vec2 rB=vec2(ca1*pBs.x-sa1*pBs.y,sa1*pBs.x+ca1*pBs.y);\n" +
             "  vec2 pB=vec2(ca2*rB.x-sa2*rB.y,sa2*rB.x+ca2*rB.y)+offB;\n" +
+            // Writhing: curl-noise warp (divergence-free), amount+speed scale with slider.
+            "  float wt=uTime*uWrithe*4.0;\n" +
+            "  float wa=uWrithe*4.0;\n" +
+            "  float ce=0.05;\n" +
+            "  vec2 qA=pA*2.0+vec2(wt*0.8,7.0);\n" +
+            "  pA+=wa*vec2(vn(qA+vec2(0.0,ce))-vn(qA-vec2(0.0,ce)), vn(qA-vec2(ce,0.0))-vn(qA+vec2(ce,0.0)));\n" +
+            "  vec2 qB=pB*2.0+vec2(wt*0.8,7.0);\n" +
+            "  pB+=wa*vec2(vn(qB+vec2(0.0,ce))-vn(qB-vec2(0.0,ce)), vn(qB-vec2(ce,0.0))-vn(qB+vec2(ce,0.0)));\n" +
             "  float blend=t;\n" +
 
-            // Compute noise for BOTH octaves, crossfade
             "  float n1a=sfbm(pA),       n1b=sfbm(pB);\n" +
             "  float n2a=sfbm(pA*1.5+vec2(3.2,1.8)), n2b=sfbm(pB*1.5+vec2(3.2,1.8));\n" +
             "  float n3a=sfbm(pA*2.3+vec2(7.1,4.3)), n3b=sfbm(pB*2.3+vec2(7.1,4.3));\n" +
             "  float n4a=sfbm(pA*0.7+vec2(1.4,6.2)), n4b=sfbm(pB*0.7+vec2(1.4,6.2));\n" +
             "  float n5a=sfbm(pA*3.1+vec2(5.5,2.7)), n5b=sfbm(pB*3.1+vec2(5.5,2.7));\n" +
-            // Crossfade the RESULTS (brightness & colour), NOT the raw noise.
-            // Mixing noise values reduces their variance at blend~0.5, which
-            // brightened/fogged the whole frame mid-cycle (the periodic darken/
-            // brighten pulse). Mixing results is a clean dissolve with no pulse.
             "  float rawA=filamentVal(n1a,n2a,n3a,n4a,n5a);\n" +
             "  float rawB=filamentVal(n1b,n2b,n3b,n4b,n5b);\n" +
             "  float raw=mix(rawA,rawB,blend);\n" +
             "  float d=pow(raw,1.4);\n" +
             "  vec3 fCol=mix(filamentCol(n1a,n2a,n4a),filamentCol(n1b,n2b,n4b),blend);\n" +
-            "  vec2 p=mix(pA,pB,blend);\n" +  // for hueNoise sample
+            "  vec2 p=mix(pA,pB,blend);\n" +
 
-            // ── Color: use fCol to tint, mapped through brightness ────────────
-            // Ambient purple falls off as d*d (was linear d) so low-density
-            // regions go black instead of hazing the whole screen.
-            "  vec3 col=fCol*d*d*0.5 + vec3(0.15,0.01,0.30)*d*d*0.4;\n" +
+            // Mid-frequency mottle for cloudy texture.
+            "  d*=0.80+0.25*vn(p*4.5+vec2(uTime*0.01,0.0));\n" +
 
-            // ── Local color tint ──────────────────────────────────────────────
-            "  float hueNoise=vn(p*3.0+vec2(uTime*0.006,uTime*0.004));\n" +
-            "  col+=vec3(0.04,0.00,0.08)*hueNoise*d*0.3;\n" +
+            // ── Spatial temperature: warm (orange) <-> purple <-> cool (blue) ──
+            "  float temp=vn(p*0.55+vec2(9.0,4.0)+vec2(uTime*0.0015,0.0));\n" +
+            "  vec3 warm=vec3(1.00,0.42,0.20);\n" +
+            "  vec3 midc=vec3(0.62,0.18,0.92);\n" +
+            "  vec3 cool=vec3(0.30,0.50,1.00);\n" +
+            "  vec3 tcol=(temp<0.5)?mix(warm,midc,temp*2.0):mix(midc,cool,(temp-0.5)*2.0);\n" +
+            "  vec3 ncol=mix(tcol,fCol,0.3);\n" +
+            "  vec3 col=ncol*d*d*0.5 + tcol*d*d*0.16;\n" +
 
-            // ── FEATURE 2: Very faint background wash ─────────────────────────
-            "  float bgN=vn(p0*0.12+vec2(uTime*0.001,uTime*0.0008));\n" +
-            "  col+=vec3(0.001,0.001,0.003)*bgN;\n" +
+            "  col+=tcol*0.06*d*d;\n" +
 
-            // ── FEATURE 3: Hot spots in screen space ──────────────────────────
-            "  vec2 hs1=vec2(sin(slowT*0.11+1.7)*0.55,cos(slowT*0.09+0.8)*0.35);\n" +
-            "  vec2 hs2=vec2(sin(slowT*0.13+3.2)*0.60,cos(slowT*0.07+2.1)*0.38);\n" +
-            "  vec2 hs3=vec2(sin(slowT*0.08+5.1)*0.45,cos(slowT*0.12+4.3)*0.40);\n" +
-            "  float hd1=length(p0-hs1);\n" +
-            "  float hd2=length(p0-hs2);\n" +
-            "  float hd3=length(p0-hs3);\n" +
-            "  float hotSum=exp(-hd1*hd1*22.0)+exp(-hd2*hd2*22.0)+exp(-hd3*hd3*22.0);\n" +
-            "  col+=vec3(0.16,0.04,0.28)*hotSum*0.25;\n" +
-
-            // ── FEATURE 5: Self-illumination on dense filaments only ───────────
-            "  col+=vec3(0.04,0.01,0.10)*d*d*0.7;\n" +
+            // ── Volumetric relief (3D-form lighting from the density gradient) ─
+            "  vec2 grad=vec2(dFdx(d),dFdy(d));\n" +
+            "  vec3 nrm=normalize(vec3(-grad*60.0,1.0));\n" +
+            "  float ndl=clamp(dot(nrm,normalize(vec3(0.55,0.45,0.62))),0.0,1.0);\n" +
+            "  col*=0.55+0.80*ndl;\n" +
+            "  col*=mix(vec3(0.74,0.82,1.12),vec3(1.06,0.95,0.80),clamp(d*1.3,0.0,1.0));\n" +
 
             // ── Bright filament-core highlights ───────────────────────────────
-            // pow(d,4) lights up only the densest ridges. Pushed toward white
-            // (not the saturated filament hue) and at moderate weight so cores
-            // read as white-hot knots rather than harsh neon edges.
-            "  col+=mix(fCol,vec3(1.0),0.6)*pow(d,5.0)*0.55;\n" +
+            "  col+=mix(ncol,vec3(1.0),0.6)*pow(d,5.0)*0.55;\n" +
+
+            // ── Two more parallax layers, ALL faster than the stars (0.009) so
+            // every nebula layer reads as IN FRONT of the starfield. ──────────
+            "  col+=nebLayer(p0,0.022*uZoom,0.62,vec3(0.45,0.30,0.85),vec3(0.75,0.38,0.65),0.42);\n" +
+            "  col+=nebLayer(p0,0.013*uZoom,0.72,vec3(0.40,0.34,0.80),vec3(0.68,0.34,0.72),0.34);\n" +
 
             // ── Stars ─────────────────────────────────────────────────────────
             "  float SZSP=0.0090*uZoom;\n" + // star zoom speed (faster than nebula); still scales with uZoom
