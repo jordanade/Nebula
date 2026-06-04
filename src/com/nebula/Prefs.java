@@ -48,7 +48,9 @@ final class Prefs {
     float writheRate() { return clampF(0.045f * getIntPref(WRITHE_SPEED, 4) / 4f, 0.0f, 0.2f); }
 
     // Frame cap is a ListPreference (string), to keep the "uncapped" option.
-    int frameCapFps() { return clampI(getStringInt(FRAME_CAP, 30), 0, 240); }
+    // Default uncapped: render every vsync for even cadence (no sleep-throttle
+    // judder). 30/60 remain available for power saving.
+    int frameCapFps() { return clampI(getStringInt(FRAME_CAP, 0), 0, 240); }
 
     private int getIntPref(String key, int def) {
         try { return sp.getInt(key, def); }

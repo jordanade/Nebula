@@ -291,10 +291,12 @@ public class NebulaDream extends DreamService {
             "  vec2 pa=q0/zf*scl+oA, pb=q0/zf*scl*2.0+oB;\n" +
             "  float a1=sfbm(pa), a2=sfbm(pa*1.8+vec2(4.0,2.0));\n" +
             "  float b1=sfbm(pb), b2=sfbm(pb*1.8+vec2(4.0,2.0));\n" +
-            "  float da=exp(-abs(a1)*15.0)*0.6+exp(-abs(a2)*22.0)*0.4;\n" +
-            "  float db=exp(-abs(b1)*15.0)*0.6+exp(-abs(b2)*22.0)*0.4;\n" +
-            "  float dd=pow(clamp(mix(da,db,tF),0.0,1.0),1.7);\n" +
-            "  return mix(c1,c2,vn(pa*0.6))*dd*dd*bri;\n" +
+            // Soft, broad falloff (vs the main's sharp filaments) so these read
+            // as distant diffuse haze, not copies of the foreground gas.
+            "  float da=exp(-abs(a1)*7.0)*0.6+exp(-abs(a2)*11.0)*0.4;\n" +
+            "  float db=exp(-abs(b1)*7.0)*0.6+exp(-abs(b2)*11.0)*0.4;\n" +
+            "  float dd=pow(clamp(mix(da,db,tF),0.0,1.0),2.2);\n" + // high power keeps voids despite soft edges
+            "  return mix(c1,c2,vn(pa*0.6))*dd*bri;\n" +
             "}\n" +
 
             "void main(){\n" +
@@ -371,8 +373,8 @@ public class NebulaDream extends DreamService {
 
             // ── Two more parallax layers, ALL faster than the stars (0.009) so
             // every nebula layer reads as IN FRONT of the starfield. ──────────
-            "  col+=nebLayer(p0,0.022*uZoom,0.62,vec3(0.45,0.30,0.85),vec3(0.75,0.38,0.65),0.42);\n" +
-            "  col+=nebLayer(p0,0.013*uZoom,0.72,vec3(0.40,0.34,0.80),vec3(0.68,0.34,0.72),0.34);\n" +
+            "  col+=nebLayer(p0,0.022*uZoom,0.70,vec3(0.55,0.32,0.85),vec3(0.88,0.44,0.52),0.40);\n" +
+            "  col+=nebLayer(p0,0.013*uZoom,1.05,vec3(0.34,0.40,0.88),vec3(0.55,0.32,0.80),0.28);\n" +
 
             // ── Stars ─────────────────────────────────────────────────────────
             "  float SZSP=0.0090*uZoom;\n" + // star zoom speed (faster than nebula); still scales with uZoom

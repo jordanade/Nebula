@@ -30,7 +30,7 @@
             android:summary="%s"
             android:entries="@array/frame_cap_entries"
             android:entryValues="@array/frame_cap_values"
-            android:defaultValue="30" />
+            android:defaultValue="0" />
 
     </PreferenceCategory>
 
