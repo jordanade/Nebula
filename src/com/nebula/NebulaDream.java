@@ -210,6 +210,16 @@ public class NebulaDream extends DreamService {
             "  }\n" +
             "  return v;\n" +
             "}\n" +
+            // ── Turbulence FBM (sum of |octaves|) — soft billowing cloud masses
+            // rather than thin ridges. ────────────────────────────────────────
+            "float billow(vec2 p){\n" +
+            "  float v=0.0,a=0.5;\n" +
+            "  mat2 rot=mat2(0.8,-0.6,0.6,0.8);\n" +
+            "  for(int i=0;i<5;i++){\n" +
+            "    v+=a*abs(vn(p)*2.0-1.0); p=rot*p*2.0; a*=0.5;\n" +
+            "  }\n" +
+            "  return v;\n" +
+            "}\n" +
             // ── Filament brightness from precomputed noise values ──────────────
             // n values passed in — computed ONCE in main, reused here and in color
             "float filamentVal(float n1,float n2,float n3,float n4,float n5){\n" +
@@ -343,9 +353,17 @@ public class NebulaDream extends DreamService {
             "  float rawA=filamentVal(n1a,n2a,n3a,n4a,n5a);\n" +
             "  float rawB=filamentVal(n1b,n2b,n3b,n4b,n5b);\n" +
             "  float raw=mix(rawA,rawB,blend);\n" +
-            "  float d=pow(raw,1.4);\n" +
             "  vec3 fCol=mix(filamentCol(n1a,n2a,n4a),filamentCol(n1b,n2b,n4b),blend);\n" +
             "  vec2 p=mix(pA,pB,blend);\n" +
+
+            // Billowing cloud masses (turbulence) folded into the gas so it isn't
+            // only thin filaments. dCore stays filament-only for the bright cores.
+            "  float bw=billow(p*0.09+vec2(2.0,5.0));\n" + // lower freq = bigger masses
+            // Keep the raw turbulence (its internal bumps) instead of a flat
+            // smoothstep mask, so the relief lighting can sculpt 3D cloud form.
+            "  float cloud=max(bw-0.14,0.0);\n" +
+            "  float dCore=pow(raw,1.4);\n" +
+            "  float d=pow(clamp(raw+cloud*2.1,0.0,1.0),0.92);\n" + // bigger, fuller, more opaque
 
             // Mid-frequency mottle for cloudy texture.
             "  d*=0.80+0.25*vn(p*4.5+vec2(uTime*0.01,0.0));\n" +
@@ -363,13 +381,13 @@ public class NebulaDream extends DreamService {
 
             // ── Volumetric relief (3D-form lighting from the density gradient) ─
             "  vec2 grad=vec2(dFdx(d),dFdy(d));\n" +
-            "  vec3 nrm=normalize(vec3(-grad*60.0,1.0));\n" +
+            "  vec3 nrm=normalize(vec3(-grad*165.0,1.0));\n" + // stronger normals = more 3D definition
             "  float ndl=clamp(dot(nrm,normalize(vec3(0.55,0.45,0.62))),0.0,1.0);\n" +
-            "  col*=0.55+0.80*ndl;\n" +
+            "  col*=0.34+1.20*ndl;\n" +
             "  col*=mix(vec3(0.74,0.82,1.12),vec3(1.06,0.95,0.80),clamp(d*1.3,0.0,1.0));\n" +
 
             // ── Bright filament-core highlights ───────────────────────────────
-            "  col+=mix(ncol,vec3(1.0),0.6)*pow(d,5.0)*0.55;\n" +
+            "  col+=mix(ncol,vec3(1.0),0.6)*pow(dCore,5.0)*0.55;\n" +
 
             // ── Two more parallax layers, ALL faster than the stars (0.009) so
             // every nebula layer reads as IN FRONT of the starfield. ──────────
