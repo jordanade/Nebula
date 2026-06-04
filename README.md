@@ -4,21 +4,28 @@ A GPU-accelerated nebula fly-through screensaver for Android TV. Vibe coded with
 
 ## What it looks like
 
-A deep-space nebula fly-through rendered entirely in GLSL on the GPU. Wispy violet/indigo filaments drift through a starfield as you continuously zoom inward — new detail perpetually emerging from the center. Runs smoothly on a NVIDIA Shield.
+A deep-space nebula fly-through rendered entirely in GLSL on the GPU. Voluminous, self-shadowed clouds of gas — sculpted with embossed relief and a warm palette that drifts from orange through magenta-pink to violet and cool blue — billow past against a glittering star field as you continuously zoom inward, new detail perpetually emerging from the center. Dense clusters of stars glow as hazy distant galaxies, the brightest cores throw occasional HDR flares with cross-hatched diffraction spikes, and big bright cloud masses give way to deep dark voids. Runs smoothly in HDR on a NVIDIA Shield.
 
-Designed for OLED displays — the majority of pixels remain black at any given moment, with filaments and hot spots occupying a minority of the frame. All elements are in continuous motion.
+Designed for OLED and HDR displays — deep black voids between the cloud masses, with the brightest cores driven into real panel headroom. All elements are in continuous motion.
 
 https://github.com/user-attachments/assets/34a24eed-c80d-4c38-893d-c32da806e17a
 
 ## Technical approach
 
 - **Single full-screen quad** — all rendering happens in one fragment shader, zero CPU geometry work per frame
-- **Zero-contour filaments** — `exp(-|sfbm(p)| * k)` produces a narrow brightness spike wherever smooth FBM crosses zero; five independent noise fields at different scales and offsets create an overlapping network of thin threads against true black, with per-filament color variation (violet, indigo-blue, magenta-rose) based on which field dominates at each pixel
+- **Voluminous cloud body** — soft, filled gas masses from smooth FBM (not turbulence, whose `abs()` creases read as hollow bubbles); zero-contour filaments (`exp(-|sfbm(p)| * k)`) sit on top as minor bright accents rather than the main form
+- **Volumetric self-shadow** — a short march toward the light through the cloud density accumulates optical depth, so the lit side of each mass stays bright while the far side falls into shadow — a directional gradient across a filled body, the real 3D-cloud cue
+- **Embossed relief** — the density gradient drives surface normals for sculpted light/dark relief, read from a band-limited macro density so fine texture never aliases into shimmer
+- **Static domain warp** — a position-based (non-animated) noise warp bends straight filaments into curled, billowing lobes: shape without motion
+- **Large-scale form** — a low-frequency mask carves big bright cloud masses against deep dark voids for sculptural composition rather than uniform coverage
+- **Warm spatial temperature** — a four-stop palette (orange → magenta-pink → violet → blue) biased warm, with a drifting "lit front" that illuminates one region like nearby stars
+- **Galaxy haze + HDR flares** — dense star clusters glow as hazy distant galaxies coincident with the star layer; the brightest cloud cores throw occasional, aperiodic HDR flashes with cross-hatched diffraction spikes
+- **Anti-aliased FBM** — mottle octaves fade out as they approach the pixel Nyquist rate (`fwidth`), so rich texture can be stacked without aliasing through the relief gradient
 - **Scale-space fractal zoom** — rotation applied after scaling ensures `pB(t=1) = pA(t=0)` exactly at every octave boundary; new detail continuously elaborates on visible structure with no position jumps, resets, or crossfade artifacts
 - **Three-phase star system** — staggered radial zoom layers with symmetric smoothstep fade-in/out; any single layer's reset is covered by the other two
+- **HDR output** — opt-in FP16 scRGB-linear surface with feature detection and automatic SDR fallback; highlight cores extend into panel headroom while mid-tones keep the tuned SDR look
 - **GLES 2.0** — compatible with any Android TV device; `highp` precision throughout prevents coordinate overflow artifacts at deep zoom levels
-- **Shared noise computation** — all five FBM values computed once per pixel and reused for both filament brightness and color, halving noise evaluation cost vs naïve implementation
-- **Burn-in safe** — dual-axis coordinate rotation plus continuous inward zoom guarantees no pixel holds a static value; filaments, hot spots, and stars are all in perpetual motion
+- **Burn-in safe** — dual-axis coordinate rotation plus continuous inward zoom guarantees no pixel holds a static value; clouds, stars, and flares are all in perpetual motion
 
 ## Install
 
