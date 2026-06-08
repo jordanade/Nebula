@@ -288,7 +288,15 @@ public class NebulaDream extends DreamService {
             "  float galaxy=smoothstep(0.50,0.82,gdn); galaxy*=galaxy;\n" +
             "  float gdet=0.5+0.5*vn(gp*0.20+vec2(3.0,7.0));\n" +
             "  gdet*=0.6+0.4*vn(gp*0.42+vec2(9.0,2.0));\n" +
-            "  galaxy*=0.45+0.75*gdet;\n" + // internal definition/detail
+            // Pointillistic stipple: resolve the haze into countless faint
+            // unresolved stars/dust grains instead of a smooth glow. Stacked
+            // high-frequency value noise, contrast-curdled into sparse sharp
+            // specks (squared to push toward discrete dots). It cross-dissolves
+            // with the three zooming star layers, so the fine grain streams in
+            // and out without popping.
+            "  float grain=vn(gp*0.55+vec2(5.0,1.0))*0.55+vn(gp*1.20+vec2(2.0,8.0))*0.30+vn(gp*2.60+vec2(7.0,3.0))*0.15;\n" +
+            "  grain=smoothstep(0.46,0.78,grain); grain*=grain;\n" +
+            "  galaxy*=0.30+0.55*gdet+0.85*grain;\n" + // soft body + pointillistic grain
             // Brighter, warmer toward the dense core of each galaxy patch.
             "  vec3 gcol=mix(vec3(0.52,0.42,0.50),vec3(0.82,0.62,0.52),smoothstep(0.62,0.96,gdn));\n" +
             "  vec3 res=gcol*galaxy*0.11;\n" +
