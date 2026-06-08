@@ -350,6 +350,18 @@ public class NebulaDream extends DreamService {
             "  return mix(c1,c2,vn(pa*0.6))*dd*bri;\n" +
             "}\n" +
 
+            // ── Bounded wander path for the per-cycle zoom-seam offset. A closed,
+            // quasi-periodic orbit (incommensurate freqs, so it doesn't visibly
+            // repeat) that keeps the framing inside a fixed dense neighbourhood of
+            // noise space — replacing the old straight unbounded translation that
+            // slowly panned the gas off-frame into the voids (emptying the screen
+            // to near-black after ~10 min). Same per-cycle step magnitude as before
+            // so the streaming motion feels unchanged; it just can't escape now. ──
+            "vec2 dpath(float k){\n" +
+            "  return vec2(0.18*sin(k*0.0731)+0.075*sin(k*0.131+1.3),\n" +
+            "              0.165*cos(k*0.0617)+0.065*cos(k*0.113+2.1));\n" +
+            "}\n" +
+
             "void main(){\n" +
             "  float aspect=uRes.x/uRes.y;\n" +
             "  vec2  uv=vUv;\n" +
@@ -370,8 +382,10 @@ public class NebulaDream extends DreamService {
             "  float ca1=cos(ang1),sa1=sin(ang1);\n" +
             "  float ca2=cos(ang2),sa2=sin(ang2);\n" +
             "  float cyc=floor(uTime*zSpd);\n" +
-            "  vec2 offA=cyc*vec2(0.05,0.037);\n" +
-            "  vec2 offB=(cyc+1.0)*vec2(0.05,0.037);\n" +
+            // Bounded orbit instead of cyc*delta: gas massing breathes around a
+            // fixed region forever (seam stays continuous: offB=dpath(cyc+1)=offA next cycle).
+            "  vec2 offA=dpath(cyc);\n" +
+            "  vec2 offB=dpath(cyc+1.0);\n" +
             "  vec2 rA=vec2(ca1*pAs.x-sa1*pAs.y,sa1*pAs.x+ca1*pAs.y);\n" +
             "  vec2 pA=vec2(ca2*rA.x-sa2*rA.y,sa2*rA.x+ca2*rA.y)+offA;\n" +
             "  vec2 rB=vec2(ca1*pBs.x-sa1*pBs.y,sa1*pBs.x+ca1*pBs.y);\n" +
