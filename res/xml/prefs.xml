@@ -17,7 +17,7 @@
             android:key="render_scale"
             android:title="@string/pref_render_scale_title"
             android:dialogTitle="@string/pref_render_scale_title"
-            android:defaultValue="75"
+            android:defaultValue="55"
             app:sliderMin="50"
             app:sliderMax="100"
             app:sliderStep="5"
@@ -30,7 +30,7 @@
             android:summary="%s"
             android:entries="@array/frame_cap_entries"
             android:entryValues="@array/frame_cap_values"
-            android:defaultValue="0" />
+            android:defaultValue="30" />
 
     </PreferenceCategory>
 

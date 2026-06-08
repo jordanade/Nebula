@@ -39,7 +39,10 @@ final class Prefs {
     }
 
     // Slider prefs are stored as ints (see SliderPreference); scale to floats.
-    float renderScale() { return clampF(getIntPref(RENDER_SCALE, 75) / 100f, 0.25f, 1.0f); }
+    // Default 60%: a barely-visible softening on the low-frequency gas that cuts
+    // fragment cost for cooler all-night running. Raise toward 100 for more detail
+    // (the Shield has plenty of thermal headroom).
+    float renderScale() { return clampF(getIntPref(RENDER_SCALE, 55) / 100f, 0.25f, 1.0f); }
 
     // Speeds use a 1–10 scale with 4 as the default. Zoom is a multiplier
     // (4 -> 1.0) applied to both nebula and star zoom, preserving their ratio.
@@ -48,9 +51,9 @@ final class Prefs {
     float writheRate() { return clampF(0.045f * getIntPref(WRITHE_SPEED, 4) / 4f, 0.0f, 0.2f); }
 
     // Frame cap is a ListPreference (string), to keep the "uncapped" option.
-    // Default uncapped: render every vsync for even cadence (no sleep-throttle
-    // judder). 30/60 remain available for power saving.
-    int frameCapFps() { return clampI(getStringInt(FRAME_CAP, 0), 0, 240); }
+    // Default 15: the slow nebula motion reads fine at 15fps, and capping lets the
+    // GPU idle between frames (cooler, lower power). 30/60/uncapped remain available.
+    int frameCapFps() { return clampI(getStringInt(FRAME_CAP, 30), 0, 240); }
 
     private int getIntPref(String key, int def) {
         try { return sp.getInt(key, def); }

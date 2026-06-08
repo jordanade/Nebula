@@ -196,12 +196,15 @@ public class NebulaDream extends DreamService {
 
             // ── Value noise ───────────────────────────────────────────────────
             "float vn(vec2 p){\n" +
-            "  vec2 i=floor(p),f=fract(p),u=f*f*(3.0-2.0*f);\n" +
+            "  vec2 i=floor(p),f=fract(p);\n" +
+            "  vec2 u=f*f*f*(f*(f*6.0-15.0)+10.0);\n" + // quintic: kills the square-grid artifacts that became straight relief ridges
+
             "  return mix(mix(h1(i),h1(i+vec2(1,0)),u.x),\n" +
             "             mix(h1(i+vec2(0,1)),h1(i+vec2(1,1)),u.x),u.y);\n" +
             "}\n" +
 
-            // ── Smooth FBM — 6 octaves for finer, more turbulent filaments ───
+            // ── Smooth FBM — 6 octaves (quintic value noise underneath keeps the
+            // grain from showing square-grid artifacts under strong relief). ──────
             "float sfbm(vec2 p){\n" +
             "  float v=0.0,a=0.55;\n" +
             "  mat2 rot=mat2(0.8,-0.6,0.6,0.8);\n" +
@@ -382,6 +385,10 @@ public class NebulaDream extends DreamService {
             "  pA+=0.64*swA;\n" +
             "  vec2 swB=vec2(sfbm(pB*0.55+vec2(1.7,4.0)),sfbm(pB*0.55+vec2(5.2,1.3)));\n" +
             "  pB+=0.64*swB;\n" +
+            // Modest finer warp octave: gently curls locally-straight ridges without
+            // over-shearing the dense gas into sheets (a strong warp made strata).
+            "  pA+=0.16*vec2(sfbm(pA*1.7+vec2(3.0,8.0)),sfbm(pA*1.7+vec2(9.0,2.0)));\n" +
+            "  pB+=0.16*vec2(sfbm(pB*1.7+vec2(3.0,8.0)),sfbm(pB*1.7+vec2(9.0,2.0)));\n" +
             "  float blend=t;\n" +
 
             "  float n1a=sfbm(pA),       n1b=sfbm(pB);\n" +
@@ -461,7 +468,7 @@ public class NebulaDream extends DreamService {
             // Gradient taken from the SMOOTH macro density so the lighting can't
             // amplify fine grain into aliased, shimmering edges.
             "  vec2 grad=vec2(dFdx(dMacro),dFdy(dMacro));\n" +
-            "  vec3 nrm=normalize(vec3(-grad*165.0,1.0));\n" + // strong emboss to sculpt the voluminous cloud forms
+            "  vec3 nrm=normalize(vec3(-grad*120.0,1.0));\n" + // softened: high relief was amplifying the noise grain into straight strata
             "  float ndl=clamp(dot(nrm,normalize(vec3(0.55,0.45,0.62))),0.0,1.0);\n" +
             "  col*=0.36+1.05*ndl;\n" + // deeper light/dark swing for pronounced 3D relief
             // ── Volumetric body shading: ambient + transmittance through the cloud.
@@ -499,9 +506,10 @@ public class NebulaDream extends DreamService {
             "  vec3  flashCol=mix(ncol,vec3(1.0),0.45);\n" + // keep the gas hue; don't punch to pure white
             "  col+=flashCol*nflash*(fglow*1.4+(chH+chV)*1.0);\n" +
 
-            // ── One more parallax layer, faster than the stars (0.009) so the
-            // foreground nebula reads as IN FRONT of the starfield. ───────────
-            "  col+=nebLayer(p0,0.022*uZoom,0.70,vec3(0.55,0.32,0.85),vec3(0.88,0.44,0.52),0.40);\n" +
+            // ── Parallax background haze layer DISABLED: its soft style clashed
+            // with the main relief nebula, and dropping it helps the frame rate.
+            // (Function kept below; re-enable by uncommenting.) ──────────────────
+            "  // col+=nebLayer(p0,0.022*uZoom,0.70,vec3(0.55,0.32,0.85),vec3(0.88,0.44,0.52),0.40);\n" +
 
             // ── Stars ─────────────────────────────────────────────────────────
             "  float SZSP=0.0090*uZoom;\n" + // star zoom speed (faster than nebula); still scales with uZoom

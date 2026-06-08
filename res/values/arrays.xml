@@ -14,11 +14,13 @@
 
     <!-- Frame rate cap (fps; 0 = uncapped) -->
     <string-array name="frame_cap_entries">
-        <item>30 fps (lowest load)</item>
+        <item>15 fps (coolest)</item>
+        <item>30 fps</item>
         <item>60 fps</item>
         <item>Uncapped</item>
     </string-array>
     <string-array name="frame_cap_values">
+        <item>15</item>
         <item>30</item>
         <item>60</item>
         <item>0</item>

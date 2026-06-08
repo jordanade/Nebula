@@ -2,6 +2,26 @@
 
 All notable changes to Nebula are documented here.
 
+## 3.0 — 2026-06-07
+
+Refinements to the v3.0 nebula:
+
+### Changed
+- **Softer relief** (×165 → ×120) — the strong emboss was amplifying the noise
+  grain into straight, parallel "strata"; softening it makes the gas read as
+  organic flowing wisps.
+- **Quintic value noise** — replaces the cubic interpolation, removing the
+  square-grid artifacts that showed as axis-aligned ridges under the relief.
+- **Finer domain-warp octave** — gently curls locally-straight ridges without
+  over-shearing the dense gas into sheets.
+- **Disabled the parallax background haze layer** — its soft style clashed with
+  the main relief nebula (kept in code, one line to re-enable).
+
+### Performance
+- Render-scale default **55%** and a **15 fps** frame-cap option, giving a steady
+  15 fps on the Shield. Temps stay ~55–59 °C (far below throttling); the
+  render-scale slider (50–100%) trades frame rate for detail.
+
 ## 3.0 — 2026-06-04
 
 A ground-up rework of the look: from thin violet filaments against black to
