@@ -106,3 +106,22 @@ but not guaranteed*; temporal reprojection decides it.
 optimization stack (ES 3.0 + 3D-texture noise + low-res march + temporal
 reprojection) — a multi-day build with residual perf risk until those land.
 Otherwise: shelve, keep v3.0 shipped.
+
+### Phase 1 results — cumulus density field ✅
+
+`dens()` upgraded to the Nubis-style recipe:
+- **Coverage** — low-freq fbm gate → discrete masses vs. open space.
+- **Billow base** — mid-freq fbm, carved by coverage (`remap`).
+- **Worley erosion** — 27-cell 3D Worley eats the edges into cauliflower.
+
+**Form: confirmed.** Stills show genuine cumulus — discrete rounded billowing
+masses with cauliflower edges and open voids between them. The thing the 2D
+shader structurally couldn't do.
+
+**Cost:** ~1.5 fps / ~680 ms/frame at 1056×594 — the 27-cell analytic Worley
+(× ~6 density samples per in-cloud step) dominates. **This is the Phase 3
+problem** (3D-texture Worley + low-res march + temporal reprojection); Phase 1 is
+about shape, and the shape is right.
+
+**Next (Phase 2):** lighting — light-march shadows, HG phase, powder, ambient,
+and the nebula palette → lit edges and shadowed bodies on top of this density.

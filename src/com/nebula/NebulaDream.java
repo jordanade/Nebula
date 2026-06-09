@@ -636,7 +636,28 @@ public class NebulaDream extends DreamService {
             "  for(int i=0;i<3;i++){ v+=a*vn3(p); p=p*2.02+5.0; a*=0.5; }\n" +
             "  return v;\n" +
             "}\n" +
-            "float dens(vec3 p){ return max(fbm3(p*0.6)-0.52,0.0)*2.2; }\n" +
+            // ── Phase 1: cumulus density field (coverage x billow base, Worley-eroded) ─
+            "vec3 h33(vec3 p){\n" +
+            "  p=vec3(dot(p,vec3(127.1,311.7,74.7)),dot(p,vec3(269.5,183.3,246.1)),dot(p,vec3(113.5,271.9,124.6)));\n" +
+            "  return fract(sin(p)*43758.5453);\n" +
+            "}\n" +
+            "float worley3(vec3 p){\n" +
+            "  vec3 ip=floor(p),fp=fract(p); float d=1.0;\n" +
+            "  for(int z=-1;z<=1;z++){ for(int y=-1;y<=1;y++){ for(int x=-1;x<=1;x++){\n" +
+            "    vec3 g=vec3(float(x),float(y),float(z));\n" +
+            "    vec3 o=h33(ip+g); vec3 r=g+o-fp; d=min(d,dot(r,r));\n" +
+            "  }}}\n" +
+            "  return sqrt(d);\n" +
+            "}\n" +
+            "float rm(float v,float l,float h){ return clamp((v-l)/(h-l),0.0,1.0); }\n" +
+            "float dens(vec3 p){\n" +
+            "  float base=fbm3(p*0.45);\n" +                          // billow base shape
+            "  float cov=smoothstep(0.40,0.62,fbm3(p*0.20+7.0));\n" + // coverage: discrete masses vs open space
+            "  float d=rm(base,1.0-cov,1.0)*cov;\n" +                 // carve the base by coverage
+            "  float ero=1.0-worley3(p*1.5);\n" +                     // billowy Worley field
+            "  d=rm(d,ero*0.32,1.0);\n" +                             // erode edges into cauliflower
+            "  return d;\n" +
+            "}\n" +
             "void main(){\n" +
             "  vec2 uv=vUv*2.0-1.0; uv.x*=uRes.x/uRes.y;\n" +
             "  vec3 ro=vec3(0.0,0.0,uTime*0.45);\n" +               // fly forward through the volume
