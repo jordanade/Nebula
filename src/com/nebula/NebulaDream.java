@@ -606,10 +606,71 @@ public class NebulaDream extends DreamService {
             "  }\n" +
             "}\n";
 
+        // ── PHASE 0 PERF SPIKE ────────────────────────────────────────────────
+        // Minimal volumetric cloud raymarcher with analytic 3D noise, empty-space
+        // skipping, early-out, and a 5-tap light march. Throwaway — its only job is
+        // to measure Tegra X1 raymarch throughput (go/no-go for the v4 build).
+        // Analytic noise is a CONSERVATIVE bound; 3D-texture sampling would be cheaper.
+        private static final String FRAG_SPIKE =
+            "#ifdef GL_FRAGMENT_PRECISION_HIGH\n" +
+            "  precision highp float;\n" +
+            "#else\n" +
+            "  precision mediump float;\n" +
+            "#endif\n" +
+            "uniform float uTime;\n" +
+            "uniform vec2  uRes;\n" +
+            "varying vec2  vUv;\n" +
+            "float h3(vec3 p){\n" +
+            "  p=fract(p*0.3183099+0.1); p*=17.0;\n" +
+            "  return fract(p.x*p.y*p.z*(p.x+p.y+p.z));\n" +
+            "}\n" +
+            "float vn3(vec3 x){\n" +
+            "  vec3 i=floor(x),f=fract(x); f=f*f*(3.0-2.0*f);\n" +
+            "  return mix(mix(mix(h3(i+vec3(0.,0.,0.)),h3(i+vec3(1.,0.,0.)),f.x),\n" +
+            "                 mix(h3(i+vec3(0.,1.,0.)),h3(i+vec3(1.,1.,0.)),f.x),f.y),\n" +
+            "             mix(mix(h3(i+vec3(0.,0.,1.)),h3(i+vec3(1.,0.,1.)),f.x),\n" +
+            "                 mix(h3(i+vec3(0.,1.,1.)),h3(i+vec3(1.,1.,1.)),f.x),f.y),f.z);\n" +
+            "}\n" +
+            "float fbm3(vec3 p){\n" +
+            "  float v=0.0,a=0.5;\n" +
+            "  for(int i=0;i<3;i++){ v+=a*vn3(p); p=p*2.02+5.0; a*=0.5; }\n" +
+            "  return v;\n" +
+            "}\n" +
+            "float dens(vec3 p){ return max(fbm3(p*0.6)-0.52,0.0)*2.2; }\n" +
+            "void main(){\n" +
+            "  vec2 uv=vUv*2.0-1.0; uv.x*=uRes.x/uRes.y;\n" +
+            "  vec3 ro=vec3(0.0,0.0,uTime*0.45);\n" +               // fly forward through the volume
+            "  vec3 rd=normalize(vec3(uv,1.5));\n" +
+            "  vec3 ldir=normalize(vec3(0.6,0.5,-0.35));\n" +
+            "  vec3 lcol=vec3(1.0,0.85,0.68);\n" +
+            "  float t=h3(vec3(gl_FragCoord.xy,uTime))*0.18;\n" +   // jittered start
+            "  float T=1.0; vec3 col=vec3(0.0);\n" +
+            "  for(int i=0;i<64;i++){\n" +
+            "    if(T<0.02) break;\n" +
+            "    vec3 p=ro+rd*t;\n" +
+            "    float d=dens(p);\n" +
+            "    if(d>0.01){\n" +                                   // in cloud: full shade
+            "      float sh=0.0;\n" +
+            "      for(int j=1;j<=5;j++){ sh+=dens(p+ldir*float(j)*0.18); }\n" +
+            "      float shadow=exp(-sh*0.18*1.4);\n" +
+            "      float dt=0.12;\n" +
+            "      col+=T*lcol*shadow*d*dt;\n" +
+            "      T*=exp(-d*dt*1.4);\n" +
+            "      t+=dt;\n" +
+            "    } else {\n" +
+            "      t+=0.26;\n" +                                    // empty space: big step
+            "    }\n" +
+            "    if(t>26.0) break;\n" +
+            "  }\n" +
+            "  col+=T*vec3(0.015,0.015,0.035);\n" +
+            "  gl_FragColor=vec4(col,1.0);\n" +
+            "}\n";
+
         private int prog, aPos, uTime, uRes, uZoom, uWrithe, uHdr, uHdrKnee, uHdrGain, uHdrMax;
         private FloatBuffer quadBuf;
         private long startMs;
         private long lastDrawMs;
+        private long fpsT0; private int fpsN; private long workAccNs; // PHASE 0 instrumentation
         private int screenW, screenH;
 
         private final float zoomMul;     // zoom-speed multiplier (1.0 = default)
@@ -640,7 +701,7 @@ public class NebulaDream extends DreamService {
             // On context recreation (e.g. resume), drop the stale program first.
             if (prog!=0) { GLES20.glDeleteProgram(prog); prog=0; }
             lastDrawMs=0;
-            prog  = buildProg(VERT, FRAG);
+            prog  = buildProg(VERT, FRAG_SPIKE); // PHASE 0 SPIKE (swap back to FRAG for v3.0)
             aPos  = GLES20.glGetAttribLocation(prog,"aPos");
             uTime = GLES20.glGetUniformLocation(prog,"uTime");
             uRes  = GLES20.glGetUniformLocation(prog,"uRes");
@@ -672,6 +733,17 @@ public class NebulaDream extends DreamService {
             }
             lastDrawMs=SystemClock.elapsedRealtime();
 
+            // PHASE 0: log cadence fps + real GPU work-time per frame (glFinish).
+            fpsN++;
+            if (fpsT0==0) fpsT0=lastDrawMs;
+            else if (lastDrawMs-fpsT0>=2000) {
+                Log.i(TAG,"SPIKE cadence="+String.format("%.1f",fpsN*1000f/(lastDrawMs-fpsT0))
+                    +"fps gpuWork="+String.format("%.1f",workAccNs/(float)fpsN/1e6f)
+                    +"ms res="+screenW+"x"+screenH+" hdr="+(hdr!=null&&hdr.hdrActive));
+                fpsN=0; fpsT0=lastDrawMs; workAccNs=0;
+            }
+            long drawStartNs=System.nanoTime();
+
             float t=(SystemClock.elapsedRealtime()-startMs)/1000f;
             GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT);
             GLES20.glUseProgram(prog);
@@ -687,6 +759,8 @@ public class NebulaDream extends DreamService {
             GLES20.glVertexAttribPointer(aPos,2,GLES20.GL_FLOAT,false,8,quadBuf);
             GLES20.glEnableVertexAttribArray(aPos);
             GLES20.glDrawArrays(GLES20.GL_TRIANGLES,0,6);
+            GLES20.glFinish(); // PHASE 0: force GPU completion to time real work
+            workAccNs += System.nanoTime()-drawStartNs;
         }
 
         private int buildProg(String vs,String fs){
