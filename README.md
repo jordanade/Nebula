@@ -8,7 +8,7 @@ A deep-space nebula fly-through rendered entirely in GLSL on the GPU. Voluminous
 
 Designed for OLED and HDR displays — deep black voids between dramatic nebula ridges, with the brightest cores driven into real panel headroom. All elements are in continuous motion.
 
-https://github.com/user-attachments/assets/107125af-f979-4bf2-ac30-a529a8a7896a
+https://github.com/user-attachments/assets/ada655dc-3a19-452c-ad3c-feaa232a154f
 
 ## Technical approach
 
