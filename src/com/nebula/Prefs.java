@@ -42,7 +42,7 @@ final class Prefs {
     // Default 60%: a barely-visible softening on the low-frequency gas that cuts
     // fragment cost for cooler all-night running. Raise toward 100 for more detail
     // (the Shield has plenty of thermal headroom).
-    float renderScale() { return clampF(getIntPref(RENDER_SCALE, 55) / 100f, 0.25f, 1.0f); }
+    float renderScale() { return clampF(getIntPref(RENDER_SCALE, 35) / 100f, 0.25f, 1.0f); }
 
     // Speeds use a 1–10 scale with 4 as the default. Zoom is a multiplier
     // (4 -> 1.0) applied to both nebula and star zoom, preserving their ratio.

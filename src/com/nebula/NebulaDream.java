@@ -658,6 +658,13 @@ public class NebulaDream extends DreamService {
             "  d=rm(d,ero*0.32,1.0);\n" +                             // erode edges into cauliflower
             "  return d;\n" +
             "}\n" +
+            // Cheap density (NO Worley) for the shadow light-march — it only needs an
+            // approximate optical depth toward the light, not the fine cauliflower.
+            "float densLow(vec3 p){\n" +
+            "  float base=fbm3(p*0.45);\n" +
+            "  float cov=smoothstep(0.40,0.62,fbm3(p*0.20+7.0));\n" +
+            "  return rm(base,1.0-cov,1.0)*cov*0.85;\n" +
+            "}\n" +
             // ── Phase 2: HG phase (silver lining) + powder + violet ambient + palette ─
             "float hg(float c,float g){ float g2=g*g; return (1.0-g2)/pow(max(1.0+g2-2.0*g*c,1e-3),1.5); }\n" +
             "void main(){\n" +
@@ -679,15 +686,15 @@ public class NebulaDream extends DreamService {
             "    float d=dens(p);\n" +
             "    if(d>0.01){\n" +
             "      float sh=0.0;\n" +
-            "      for(int j=1;j<=6;j++){ sh+=dens(p+ldir*float(j)*0.16); }\n" +
-            "      float lT=exp(-sh*0.16*1.7);\n" +                  // transmittance toward light (self-shadow)
-            "      float powder=1.0-exp(-d*2.5);\n" +               // dark-edge / cauliflower cue
+            "      for(int j=1;j<=6;j++){ sh+=densLow(p+ldir*float(j)*0.16); }\n" +
+            "      float lT=exp(-sh*0.16*1.7);\n" +
+            "      float powder=1.0-exp(-d*2.5);\n" +
             "      float dt=0.11;\n" +
             "      vec3 scat=(sunCol*lT*phase*(0.35+1.5*powder)+ambCol)*d*dt;\n" +
             "      col+=T*scat;\n" +
             "      T*=exp(-d*dt*1.6);\n" +
             "      t+=dt;\n" +
-            "    } else { t+=0.24; }\n" +                            // empty space: big step
+            "    } else { t+=0.24; }\n" +
             "    if(t>26.0) break;\n" +
             "  }\n" +
             "  col+=T*vec3(0.02,0.02,0.06);\n" +                     // faint background

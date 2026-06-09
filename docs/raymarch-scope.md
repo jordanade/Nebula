@@ -148,3 +148,33 @@ ray termination from the lighting). Still firmly the Phase 3 problem.
 unknown is **performance** — Phase 3 (GLES 3.0 + 3D-texture noise + low-res march
 + temporal reprojection) decides whether this ships or stays a beautiful 2.5 fps
 proof-of-concept.
+
+### Phase 3 — performance (in progress)
+
+Measured on the Shield (Tegra X1):
+
+| Render scale | Resolution | fps | GPU/frame |
+|---|---|---|---|
+| 0.55 | 1056×594 | 2.5 | ~400 ms |
+| 0.35 | 672×378 | **5.0** | **~200 ms** |
+
+**Finding 1 — resolution is a clean ~linear lever.** 2.47× fewer pixels → ~2×
+faster. Reliable, immune to divergence. (Cost: softer image; we upscale.)
+
+**Finding 2 — micro-optimization backfires (divergence).** Splitting the march
+with a cheap `densLow` empty-space gate (skip the 27-cell Worley outside clouds)
+made it *slower* (2.5 → 1.9 fps). On the Tegra X1 the marcher is bound by **branch
+divergence + loop overhead**, not raw Worley ALU: neighbouring rays diverge, so a
+warp runs the worst-case path anyway and the extra branches just add cost. Lesson:
+the marcher must stay branch-light; the real wins come from removing work
+*uniformly*, not conditionally.
+
+**Remaining levers (the big ones):**
+- **3D-texture noise (GLES 3.0)** — replace analytic fbm/Worley with texture
+  fetches; removes the ALU *uniformly* (divergence-proof). Est. 3–4×.
+- **Temporal reprojection** — amortize across frames (ping-pong FBOs). ~2×.
+
+**Projection:** 0.35 low-res (5 fps) × 3D-texture (~3–4×) ≈ 15–20 fps; × temporal
+reprojection (~2×) ≈ ~30 fps. **Viable, but only with the full stack** — exactly
+the scope's conditional-go. Next: the GLES 3.0 + 3D-texture migration (the big
+build).
