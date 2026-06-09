@@ -125,3 +125,26 @@ about shape, and the shape is right.
 
 **Next (Phase 2):** lighting — light-march shadows, HG phase, powder, ambient,
 and the nebula palette → lit edges and shadowed bodies on top of this density.
+
+### Phase 2 results — lighting + nebula palette ✅
+
+Added on top of the Phase 1 density:
+- **Light march** (6-tap toward the light) → Beer self-shadow transmittance.
+- **Henyey-Greenstein phase** (forward lobe g=0.35 + slight back lobe) → the
+  silver-lined edge when looking toward the light.
+- **Powder term** (`1 − exp(−d·k)`) → the dark-edge cauliflower cue.
+- **Violet ambient** so shadowed sides glow instead of going black.
+- **Nebula palette** — per-pixel large-scale region tint: warm
+  orange↔magenta starlight against violet ambient (no white "earth cloud").
+
+**Look: confirmed.** Reads as a nebula now — violet volumetric cumulus with lit
+edges, shadowed bodies, cauliflower detail, deep voids. The defined-3D-form +
+lit-edges goal the 2D shader never reached.
+
+**Cost:** ~2.5 fps / ~400 ms at 1056×594 (slightly faster than Phase 1 — earlier
+ray termination from the lighting). Still firmly the Phase 3 problem.
+
+**Status:** the *look* is now fully validated (Phases 1–2). The only remaining
+unknown is **performance** — Phase 3 (GLES 3.0 + 3D-texture noise + low-res march
++ temporal reprojection) decides whether this ships or stays a beautiful 2.5 fps
+proof-of-concept.

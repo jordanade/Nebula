@@ -658,32 +658,39 @@ public class NebulaDream extends DreamService {
             "  d=rm(d,ero*0.32,1.0);\n" +                             // erode edges into cauliflower
             "  return d;\n" +
             "}\n" +
+            // ── Phase 2: HG phase (silver lining) + powder + violet ambient + palette ─
+            "float hg(float c,float g){ float g2=g*g; return (1.0-g2)/pow(max(1.0+g2-2.0*g*c,1e-3),1.5); }\n" +
             "void main(){\n" +
             "  vec2 uv=vUv*2.0-1.0; uv.x*=uRes.x/uRes.y;\n" +
-            "  vec3 ro=vec3(0.0,0.0,uTime*0.45);\n" +               // fly forward through the volume
+            "  vec3 ro=vec3(0.0,0.0,uTime*0.40);\n" +               // fly forward
             "  vec3 rd=normalize(vec3(uv,1.5));\n" +
-            "  vec3 ldir=normalize(vec3(0.6,0.5,-0.35));\n" +
-            "  vec3 lcol=vec3(1.0,0.85,0.68);\n" +
-            "  float t=h3(vec3(gl_FragCoord.xy,uTime))*0.18;\n" +   // jittered start
+            "  vec3 ldir=normalize(vec3(0.55,0.5,-0.35));\n" +
+            // nebula colour: large-scale per-pixel region tint (cheap), drifting
+            "  float reg=vn3(vec3(uv*1.3+uTime*0.02,uTime*0.05));\n" +
+            "  vec3 sunCol=mix(vec3(1.00,0.50,0.32),vec3(1.00,0.42,0.74),reg);\n" + // orange<->magenta starlight
+            "  vec3 ambCol=mix(vec3(0.10,0.09,0.26),vec3(0.16,0.09,0.32),reg);\n" + // violet ambient
+            "  float cosT=dot(rd,ldir);\n" +
+            "  float phase=hg(cosT,0.35)*0.7+hg(cosT,-0.12)*0.3;\n" + // forward lobe = silver lining
+            "  float t=h3(vec3(gl_FragCoord.xy,uTime))*0.16;\n" +    // jittered start
             "  float T=1.0; vec3 col=vec3(0.0);\n" +
             "  for(int i=0;i<64;i++){\n" +
             "    if(T<0.02) break;\n" +
             "    vec3 p=ro+rd*t;\n" +
             "    float d=dens(p);\n" +
-            "    if(d>0.01){\n" +                                   // in cloud: full shade
+            "    if(d>0.01){\n" +
             "      float sh=0.0;\n" +
-            "      for(int j=1;j<=5;j++){ sh+=dens(p+ldir*float(j)*0.18); }\n" +
-            "      float shadow=exp(-sh*0.18*1.4);\n" +
-            "      float dt=0.12;\n" +
-            "      col+=T*lcol*shadow*d*dt;\n" +
-            "      T*=exp(-d*dt*1.4);\n" +
+            "      for(int j=1;j<=6;j++){ sh+=dens(p+ldir*float(j)*0.16); }\n" +
+            "      float lT=exp(-sh*0.16*1.7);\n" +                  // transmittance toward light (self-shadow)
+            "      float powder=1.0-exp(-d*2.5);\n" +               // dark-edge / cauliflower cue
+            "      float dt=0.11;\n" +
+            "      vec3 scat=(sunCol*lT*phase*(0.35+1.5*powder)+ambCol)*d*dt;\n" +
+            "      col+=T*scat;\n" +
+            "      T*=exp(-d*dt*1.6);\n" +
             "      t+=dt;\n" +
-            "    } else {\n" +
-            "      t+=0.26;\n" +                                    // empty space: big step
-            "    }\n" +
+            "    } else { t+=0.24; }\n" +                            // empty space: big step
             "    if(t>26.0) break;\n" +
             "  }\n" +
-            "  col+=T*vec3(0.015,0.015,0.035);\n" +
+            "  col+=T*vec3(0.02,0.02,0.06);\n" +                     // faint background
             "  gl_FragColor=vec4(col,1.0);\n" +
             "}\n";
 
