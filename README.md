@@ -4,9 +4,9 @@ A GPU-accelerated nebula fly-through screensaver for Android TV. Vibe coded with
 
 ## What it looks like
 
-A deep-space nebula fly-through rendered entirely in GLSL on the GPU. Voluminous, self-shadowed clouds of gas — sculpted with embossed relief and a warm palette that drifts from orange through magenta-pink to violet and cool blue — billow past against a glittering star field as you continuously zoom inward, new detail perpetually emerging from the center. Dense clusters of stars glow as hazy distant galaxies, the brightest cores throw occasional HDR flares with cross-hatched diffraction spikes, and big bright cloud masses give way to deep dark voids. Runs smoothly in HDR on a NVIDIA Shield.
+A deep-space nebula fly-through rendered entirely in GLSL on the GPU. Voluminous, self-shadowed clouds of gas — sculpted with embossed relief and a palette centred on deep violet and indigo, with magenta and cool-blue accents — billow past against a glittering star field as you continuously zoom inward, new detail perpetually emerging from the center. Dramatic bright ridges give way to deep black voids; dense clusters of stars glow as hazy distant galaxies, and the brightest cores throw occasional HDR flares with cross-hatched diffraction spikes. Runs smoothly in HDR on a NVIDIA Shield.
 
-Designed for OLED and HDR displays — deep black voids between the cloud masses, with the brightest cores driven into real panel headroom. All elements are in continuous motion.
+Designed for OLED and HDR displays — deep black voids between dramatic nebula ridges, with the brightest cores driven into real panel headroom. All elements are in continuous motion.
 
 https://github.com/user-attachments/assets/107125af-f979-4bf2-ac30-a529a8a7896a
 
@@ -17,8 +17,9 @@ https://github.com/user-attachments/assets/107125af-f979-4bf2-ac30-a529a8a7896a
 - **Volumetric self-shadow** — a short march toward the light through the cloud density accumulates optical depth, so the lit side of each mass stays bright while the far side falls into shadow — a directional gradient across a filled body, the real 3D-cloud cue
 - **Embossed relief** — the density gradient drives surface normals for sculpted light/dark relief, read from a band-limited macro density so fine texture never aliases into shimmer
 - **Static domain warp** — a position-based (non-animated) noise warp bends straight filaments into curled, billowing lobes: shape without motion
-- **Large-scale form** — a low-frequency mask carves big bright cloud masses against deep dark voids for sculptural composition rather than uniform coverage
-- **Warm spatial temperature** — a four-stop palette (orange → magenta-pink → violet → blue) biased warm, with a drifting "lit front" that illuminates one region like nearby stars
+- **Large-scale form** — a low-frequency mask carves bright filament ridges against deep black voids for sculptural composition rather than uniform coverage; density is weighted toward the ridges over the smooth fill
+- **Spatial temperature** — a four-stop palette (orange → magenta-pink → violet → blue) centred on violet/indigo, with a gentle drifting "lit front" that illuminates one region like nearby stars while keeping the bright masses in the purple family
+- **Scanned framing** — the continuous zoom drifts on a bounded, quasi-periodic orbit centred on a dense, high-contrast region of the noise field, so the composition always holds real structure and never pans off into empty space
 - **Galaxy haze + HDR flares** — dense star clusters glow as hazy distant galaxies coincident with the star layer; the brightest cloud cores throw occasional, aperiodic HDR flashes with cross-hatched diffraction spikes
 - **Anti-aliased FBM** — mottle octaves fade out as they approach the pixel Nyquist rate (`fwidth`), so rich texture can be stacked without aliasing through the relief gradient
 - **Scale-space fractal zoom** — rotation applied after scaling ensures `pB(t=1) = pA(t=0)` exactly at every octave boundary; new detail continuously elaborates on visible structure with no position jumps, resets, or crossfade artifacts

@@ -253,9 +253,9 @@ public class NebulaDream extends DreamService {
             "  float w2=exp(-abs(n2)*20.0);\n" +
             "  float w4=exp(-abs(n4)*14.0);\n" +
             "  float wt=max(w1+w2+w4,0.001);\n" +
-            "  return vec3(0.55,0.05,0.90)*w1/wt\n" +
+            "  return vec3(0.53,0.05,0.92)*w1/wt\n" +
             "        +vec3(0.10,0.15,0.90)*w2/wt\n" +
-            "        +vec3(0.80,0.05,0.55)*w4/wt;\n" +
+            "        +vec3(0.69,0.05,0.68)*w4/wt;\n" +
             "}\n" +
 
             // ── Stars ─────────────────────────────────────────────────────────
@@ -357,9 +357,13 @@ public class NebulaDream extends DreamService {
             // slowly panned the gas off-frame into the voids (emptying the screen
             // to near-black after ~10 min). Same per-cycle step magnitude as before
             // so the streaming motion feels unchanged; it just can't escape now. ──
+            // Centred on a genuinely dense, high-contrast neighbourhood of the
+            // noise field (found by scanning the macro density); the orbit then
+            // frames real masses so the void-carve reads as dramatic ridges over
+            // black, instead of the near-empty dead zone the origin turned out to be.
             "vec2 dpath(float k){\n" +
-            "  return vec2(0.18*sin(k*0.0731)+0.075*sin(k*0.131+1.3),\n" +
-            "              0.165*cos(k*0.0617)+0.065*cos(k*0.113+2.1));\n" +
+            "  return vec2( 0.85+0.18*sin(k*0.0731)+0.075*sin(k*0.131+1.3),\n" +
+            "              -1.25+0.165*cos(k*0.0617)+0.065*cos(k*0.113+2.1));\n" +
             "}\n" +
 
             "void main(){\n" +
@@ -427,7 +431,7 @@ public class NebulaDream extends DreamService {
             // ── Soft, FILLED billowy cloud masses from SMOOTH fBm. Rounded bodies
             // with no cellular dark veins (which is what turbulence/billow gave). ─
             "  float cform=sfbm4(p*0.115+vec2(2.0,5.0));\n" + // lower freq = BIGGER, more voluminous masses
-            "  float cloud=smoothstep(-0.28,0.56,cform);\n" + // wider range = fuller, more filled-in cloud bodies
+            "  float cloud=smoothstep(-0.12,0.57,cform);\n" + // higher floor again => ~25% less cloud coverage
             // ── Volumetric self-shadow: march toward the light through the SAME
             // smooth cloud field, accumulating optical depth. The lit side of each
             // mass stays bright while the far side dims — a soft directional
@@ -442,14 +446,14 @@ public class NebulaDream extends DreamService {
             // overall sculptural composition (like a real nebula's massing) instead
             // of uniform filament coverage everywhere. Low frequency = big shapes. ─
             "  float bigF=sfbm(p*0.28+vec2(11.0,6.0));\n" + // lower freq = bigger lobes
-            "  float bigShape=smoothstep(-0.40,0.45,bigF);\n" +
-            "  float dCore=pow(raw,1.4)*(0.42+0.62*bigShape);\n" + // lower floor = deeper, darker voids between masses
+            "  float bigShape=smoothstep(-0.31,0.46,bigF);\n" + // opens voids between lobes without erasing them
+            "  float dCore=pow(raw,1.4)*(0.30+0.70*bigShape);\n" + // lower floor = deeper, darker voids between masses
             // Macro density = smooth gas form + MULTI-SCALE band-limited mottle.
             // The relief below reads this, so the mottle becomes real 3D texture
             // and form (curds, billows, crevices) rather than flat emboss. albm
             // dissolves octaves before the pixel Nyquist, so this rich mottling
             // never shimmers/aliases the way raw high-freq detail did.
-            "  float dMacro=pow(clamp(raw*0.42+cloud*1.45,0.0,1.0),0.78)*(0.46+0.58*bigShape);\n" + // fuller voluminous body; deeper voids carve sculptural gaps between masses
+            "  float dMacro=pow(clamp(raw*0.70+cloud*1.03,0.0,1.0),0.84)*(0.28+0.78*bigShape);\n" + // ridge-weighted + lower floor => ~25% less coverage, deeper black between masses
             "  float mott=albm(p*1.7+vec2(uTime*0.01,3.0))*0.5+0.5;\n" +  // 0..1 multi-scale form
             // Centered near the old mean (~0.92) so the mottle adds CONTRAST/texture,
             // not extra brightness — pushing density >1 here was clipping cores white.
@@ -470,16 +474,20 @@ public class NebulaDream extends DreamService {
             // warm and range-widened so the signature pink and the orange/blue
             // extremes actually appear, not just purple. Lit front pulls warmer. ──
             "  float temp=vn(p*0.55+vec2(9.0,4.0)+vec2(uTime*0.0015,0.0));\n" +
-            "  temp=clamp((temp-0.5)*1.5+0.40-litFront*0.18,0.0,1.0);\n" + // warm bias + wider spread
-            "  vec3 warm=vec3(1.00,0.44,0.16);\n" +  // orange/red
-            "  vec3 pink=vec3(1.00,0.30,0.58);\n" +  // magenta-pink (the reference's signature)
-            "  vec3 midc=vec3(0.60,0.18,0.92);\n" +  // purple
-            "  vec3 cool=vec3(0.32,0.52,1.00);\n" +  // blue
+            "  temp=clamp((temp-0.5)*1.5+0.60-litFront*0.07,0.0,1.0);\n" + // plum/purple; gentle lit-front warm pull so bright masses stay purple, not red
+            "  vec3 warm=vec3(1.00,0.44,0.16);\n" +  // orange/red (rare warm accent)
+            "  vec3 pink=vec3(0.96,0.28,0.60);\n" +  // magenta-pink, slightly off the mauve
+            "  vec3 midc=vec3(0.49,0.14,0.94);\n" +  // purple, a touch deeper/more violet than the old wash
+            "  vec3 cool=vec3(0.31,0.50,1.00);\n" +  // blue
             "  vec3 tcol = (temp<0.33) ? mix(warm,pink,temp/0.33)\n" +
             "             : (temp<0.66) ? mix(pink,midc,(temp-0.33)/0.33)\n" +
             "                           : mix(midc,cool,(temp-0.66)/0.34);\n" +
             "  vec3 ncol=mix(tcol,fCol,0.3);\n" +
-            "  vec3 col=ncol*d*d*0.5 + tcol*d*d*0.16;\n" +
+            // Emission curve: lift the faint/mid gas toward linear so the nebula
+            // reads more clearly (it was too subtle under the pure d*d quadratic),
+            // while bright cores barely change and the voids (d~0) stay inky.
+            "  float dEmit=mix(d*d,d,0.20);\n" +
+            "  vec3 col=ncol*dEmit*0.56 + tcol*dEmit*0.18;\n" +
             // Large-scale illumination: lift brightness in the lit front (modest, so
             // it composes a glowing ridge without the old harsh-white blowout).
             "  col*=1.0+0.45*litFront*d;\n" +
@@ -497,14 +505,14 @@ public class NebulaDream extends DreamService {
             // This is the big-scale lit-crest / shadowed-underside cue that makes the
             // gas read as a 3D volume. Lit crests can lift slightly above 1.0.
             "  col*=0.42+0.85*shadow;\n" + // high ambient floor: shadowed gas still EMITS (filled body), lit side brighter
-            "  col*=mix(vec3(0.74,0.82,1.12),vec3(1.06,0.95,0.80),clamp(d*1.3,0.0,1.0));\n" +
+            "  col*=mix(vec3(0.76,0.83,1.12),vec3(1.00,0.82,1.06),clamp(d*1.3,0.0,1.0));\n" + // dense gas tints violet-magenta (was warm/brown in thick masses)
             // Micro-occlusion (lightened — the volume shading now carries the depth):
             // just deepen the fine mottle valleys a touch.
             "  col*=0.76+0.24*mott;\n" +
             // Color mottle: chromatic texture tied to the form (cool/dim in the
             // valleys, warm/full on the crests) so richness comes from hue, not
             // just luminance embossing.
-            "  col*=mix(vec3(0.82,0.80,0.98),vec3(1.12,1.02,0.90),mott);\n" +
+            "  col*=mix(vec3(0.83,0.81,0.99),vec3(1.04,0.96,1.02),mott);\n" +
 
             // ── Bright filament-core highlights ───────────────────────────────
             "  col+=mix(ncol,vec3(1.0),0.4)*pow(dCore,6.0)*0.3;\n" + // tighter, dimmer cores so bright filament LINES don't dominate the cloud body

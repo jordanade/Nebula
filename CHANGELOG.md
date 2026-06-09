@@ -2,6 +2,30 @@
 
 All notable changes to Nebula are documented here.
 
+## 3.1 — 2026-06-08
+
+An art-direction pass: a purpler palette, more dramatic massing, and a fix for
+the gas slowly drifting off-screen.
+
+### Changed
+- **Bounded, relocated zoom orbit** — the per-cycle zoom-seam offset was an
+  unbounded straight translation, so over ~10 min the gas panned off-frame into
+  the voids and the screen emptied to near-black. It now follows a bounded,
+  quasi-periodic orbit centred on a genuinely dense, high-contrast region of the
+  noise field (found by scanning the macro-density), so the framing always holds
+  real structure. Seam continuity is preserved (`offB(cyc) == offA(cyc+1)`).
+- **Purple/indigo palette** — re-centred the spatial-temperature ramp on
+  purple/violet instead of warm pink, deepened the purple anchor toward indigo,
+  swung the dense-gas tint from warm to violet, and eased the lit-front warm
+  pull so bright masses stay purple rather than going red/brown.
+- **More dramatic massing, ~25% less coverage** — density is now weighted toward
+  filament ridges over smooth fill, with a lower big-shape floor and higher cloud
+  threshold, so the frame reads as bright ridges over deep black voids instead of
+  wall-to-wall gas.
+- **Brighter faint gas** — the emission curve lifts faint/mid densities toward
+  linear (`mix(d*d, d, 0.2)`) so subtle gas reads more clearly while cores and
+  voids are unchanged.
+
 ## 3.0 — 2026-06-07
 
 Refinements to the v3.0 nebula:
