@@ -625,7 +625,8 @@ public class NebulaDream extends DreamService {
             "  return fract(p.x*p.y*p.z*(p.x+p.y+p.z));\n" +
             "}\n" +
             "float vn3(vec3 x){\n" +
-            "  vec3 i=floor(x),f=fract(x); f=f*f*(3.0-2.0*f);\n" +
+            "  vec3 i=floor(x),f=fract(x); f=f*f*f*(f*(f*6.0-15.0)+10.0);\n" + // quintic: kills axis-aligned grid lines
+
             "  return mix(mix(mix(h3(i+vec3(0.,0.,0.)),h3(i+vec3(1.,0.,0.)),f.x),\n" +
             "                 mix(h3(i+vec3(0.,1.,0.)),h3(i+vec3(1.,1.,0.)),f.x),f.y),\n" +
             "             mix(mix(h3(i+vec3(0.,0.,1.)),h3(i+vec3(1.,0.,1.)),f.x),\n" +
@@ -669,7 +670,7 @@ public class NebulaDream extends DreamService {
             "float hg(float c,float g){ float g2=g*g; return (1.0-g2)/pow(max(1.0+g2-2.0*g*c,1e-3),1.5); }\n" +
             "void main(){\n" +
             "  vec2 uv=vUv*2.0-1.0; uv.x*=uRes.x/uRes.y;\n" +
-            "  vec3 ro=vec3(0.0,0.0,uTime*0.40);\n" +               // fly forward
+            "  vec3 ro=vec3(sin(uTime*0.05)*0.7,cos(uTime*0.037)*0.5,uTime*0.40);\n" + // fly forward + gentle drift (off-axis)
             "  vec3 rd=normalize(vec3(uv,1.5));\n" +
             "  vec3 ldir=normalize(vec3(0.55,0.5,-0.35));\n" +
             // nebula colour: large-scale per-pixel region tint (cheap), drifting
