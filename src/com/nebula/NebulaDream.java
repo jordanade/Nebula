@@ -694,13 +694,16 @@ public class NebulaDream extends DreamService {
             // analytic noise / branching) — R=value fbm, G=inverted Worley billow. ──
             "float dens(vec3 p){\n" +
             "  float base=texture(uNoise,p*0.10).r;\n" +              // billow base
-            "  float cov=smoothstep(0.42,0.66,texture(uNoise,p*0.04+0.31).r);\n" + // coverage: masses vs space
+            // Coverage: wide soft lower edge admits the SADDLES of the noise field
+            // as thinner gas — the regions between adjacent masses — so disparate
+            // clouds read as linked by connective bridges/filaments.
+            "  float cov=smoothstep(0.30,0.64,texture(uNoise,p*0.04+0.31).r);\n" +
             "  float d=rm(base,1.0-cov,1.0)*cov;\n" +
             "  float ero=texture(uNoise,p*0.34).g;\n" +              // Worley billow erosion
             "  d=rm(d,ero*0.32,1.0);\n" +
             "  float ero2=texture(uNoise,p*0.95).g;\n" +             // finer second erosion → sharp wispy edge detail
-            "  d=rm(d,ero2*0.30,1.0);\n" +
-            "  return pow(d,1.7);\n" +                               // steep falloff: crisp defined edges, thin interiors
+            "  d=rm(d,ero2*0.38,1.0);\n" +                           // bite harder into the edges
+            "  return pow(d,2.2);\n" +                               // steeper falloff: crisp defined edges, thin interiors
             "}\n" +
             "float densLow(vec3 p){\n" +                             // cheap density for the shadow march
             "  float base=texture(uNoise,p*0.10).r;\n" +
@@ -732,20 +735,23 @@ public class NebulaDream extends DreamService {
             // ── NEBULA shading: highly-transparent EMISSIVE gas. No light march,
             // no phase — the gas GLOWS (emission nebula), it is not sunlit cloud.
             // Very low extinction: rays cross whole masses; stars shine through.
-            "  for(int i=0;i<64;i++){\n" +
-            "    if(T<0.02) break;\n" +
+            "  for(int i=0;i<48;i++){\n" +
+            "    if(T<0.07) break;\n" +                              // raised early-out: imperceptible, restores termination on translucent gas
+            // Distance-adaptive stepping: near gas finely sampled, far gas coarser
+            // (it is smaller on screen) — the same step budget reaches ~2x deeper.
+            "    float g=1.0+t*0.07;\n" +
             "    vec3 p=ro+rd*t;\n" +
             "    float d=dens(p);\n" +
             "    if(d>0.01){\n" +
-            "      float dt=0.11;\n" +
-            "      vec3 emit=tcol*d*0.85+ambCol*d*0.35;\n" +        // glow from within, region-coloured
+            "      float dt=0.11*g;\n" +
+            "      vec3 emit=tcol*d*0.55+ambCol*d*0.25;\n" +        // glow from within, region-coloured
             "      col+=T*emit*dt;\n" +
-            "      T*=exp(-d*dt*0.35);\n" +                         // very low extinction → translucent veils
+            "      T*=exp(-d*dt*0.28);\n" +                         // even lower extinction → ghostlier veils
             "      t+=dt;\n" +
-            "    } else { t+=0.24; }\n" +
-            "    if(t>26.0) break;\n" +
+            "    } else { t+=0.24*g; }\n" +
+            "    if(t>38.0) break;\n" +                              // deeper march range
             "  }\n" +
-            "  col*=1.3;\n" + // gain for the tonemap
+            "  col*=1.15;\n" + // gain for the tonemap
 
             // ── Stars + galaxy haze BEHIND the clouds (v3.1 three-phase zooming
             // star system), weighted by the ray's remaining transmittance T so
@@ -779,7 +785,7 @@ public class NebulaDream extends DreamService {
             "  col*=smoothstep(0.0,10.0,uTime);\n" +
             "  float pk=max(max(col.r,col.g),col.b);\n" +
             "  float luma=dot(col,vec3(0.30,0.40,0.30));\n" +
-            "  col=mix(col,vec3(luma),smoothstep(0.95,2.2,pk)*0.6);\n" +
+            "  col=mix(col,vec3(luma),smoothstep(1.6,3.4,pk)*0.45);\n" + // keep hue much longer — dense gas columns were rolling to white
             "  vec3 base=col/(col+vec3(0.85));\n" +
             "  base=pow(max(base,vec3(0.0)),vec3(0.92))*1.12;\n" +
             "  if(uHdr>0.5){\n" +
@@ -813,7 +819,7 @@ public class NebulaDream extends DreamService {
         // into the headroom (so glow/halos keep their SDR look). HDR_GAIN is the
         // initial slope; the boost soft-saturates toward HDR_MAX so overlapping
         // filaments roll off to the panel peak instead of hard-clipping harshly.
-        private static final float HDR_KNEE = 1.0f;
+        private static final float HDR_KNEE = 2.4f;  // v4: above gas-column peaks — only star flares/cores extend into headroom
         private static final float HDR_GAIN = 30.0f;
         private static final float HDR_MAX  = 30.0f; // high ceiling: cores drive to the panel peak
 
