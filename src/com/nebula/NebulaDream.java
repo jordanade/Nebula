@@ -726,9 +726,14 @@ public class NebulaDream extends DreamService {
             "  vec3 sunCol=tcol;\n" +
             "  vec3 ambCol=mix(vec3(0.09,0.07,0.24),tcol*0.30,0.40);\n" + // violet ambient tinted toward the region colour
             "  float cosT=dot(rd,ldir);\n" +
-            "  float phase=hg(cosT,0.35)*0.7+hg(cosT,-0.12)*0.3;\n" + // forward lobe = silver lining
+            "  float phase=hg(cosT,0.20)*0.5+0.5;\n" + // weak directionality — gas glow, not sunlit-cloud silver lining
             "  float t=fract(sin(dot(gl_FragCoord.xy,vec2(41.3,289.1))+uTime)*43758.5)*0.16;\n" + // jittered start
             "  float T=1.0; vec3 col=vec3(0.0);\n" +
+            // ── NEBULA shading: mostly-transparent EMISSIVE gas, not opaque cloud.
+            // Low extinction lets rays pass through whole masses (stars visible
+            // through the gas); emission glows from within; the light-march only
+            // gently modulates. Earth-cloud cues (hard Beer falloff, powder,
+            // strong forward phase) deliberately removed/reduced.
             "  for(int i=0;i<64;i++){\n" +
             "    if(T<0.02) break;\n" +
             "    vec3 p=ro+rd*t;\n" +
@@ -736,17 +741,18 @@ public class NebulaDream extends DreamService {
             "    if(d>0.01){\n" +
             "      float sh=0.0;\n" +
             "      for(int j=1;j<=6;j++){ sh+=densLow(p+ldir*float(j)*0.16); }\n" +
-            "      float lT=exp(-sh*0.16*1.7);\n" +
-            "      float powder=1.0-exp(-d*2.5);\n" +
+            "      float lT=exp(-sh*0.16*0.7);\n" +                 // soft, low-contrast shadowing
             "      float dt=0.11;\n" +
-            "      vec3 scat=(sunCol*lT*phase*(0.35+1.5*powder)+ambCol)*d*dt;\n" +
-            "      col+=T*scat;\n" +
-            "      T*=exp(-d*dt*1.6);\n" +
+            // emission (glow from within, region-coloured) + softly-lit scatter
+            "      vec3 emit=tcol*d*0.30;\n" +
+            "      vec3 scat=sunCol*lT*phase*d*0.25+ambCol*d*0.5;\n" +
+            "      col+=T*(emit+scat)*dt;\n" +
+            "      T*=exp(-d*dt*0.60);\n" +                         // LOW extinction → translucent veils
             "      t+=dt;\n" +
             "    } else { t+=0.24; }\n" +
             "    if(t>26.0) break;\n" +
             "  }\n" +
-            "  col*=1.6;\n" + // cloud gain: scatter was tuned for raw output; compensate for the Reinhard tonemap
+            "  col*=1.2;\n" + // gain for the tonemap
 
             // ── Stars + galaxy haze BEHIND the clouds (v3.1 three-phase zooming
             // star system), weighted by the ray's remaining transmittance T so
