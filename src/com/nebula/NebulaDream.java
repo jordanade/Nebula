@@ -627,9 +627,68 @@ public class NebulaDream extends DreamService {
             "precision highp sampler3D;\n" +
             "uniform float uTime;\n" +
             "uniform vec2  uRes;\n" +
+            "uniform float uZoom;\n" +
+            "uniform float uHdr;\n" +     // 1 = HDR scRGB-linear output, 0 = SDR
+            "uniform float uHdrKnee;\n" +
+            "uniform float uHdrGain;\n" +
+            "uniform float uHdrMax;\n" +
             "uniform sampler3D uNoise;\n" + // R = value fbm, G = inverted Worley (billow)
             "in vec2 vUv;\n" +
             "out vec4 fragColor;\n" +
+            // ── Stars + pointillistic galaxy haze, ported faithfully from v3.1 ──
+            "float h1(vec2 i){ vec2 p=fract(i*vec2(0.1031,0.1030)); p+=dot(p,p+19.19); return fract(p.x*p.y); }\n" +
+            "vec2 h2(vec2 i){ vec2 p=fract(i*vec2(0.1031,0.1030)); p+=dot(p,p.yx+19.19); return fract((p.xx+p.yx)*p.xy); }\n" +
+            "float vn(vec2 p){\n" +
+            "  vec2 i=floor(p),f=fract(p);\n" +
+            "  vec2 u=f*f*f*(f*(f*6.0-15.0)+10.0);\n" +
+            "  return mix(mix(h1(i),h1(i+vec2(1,0)),u.x),\n" +
+            "             mix(h1(i+vec2(0,1)),h1(i+vec2(1,1)),u.x),u.y);\n" +
+            "}\n" +
+            "vec3 starCol(float h){\n" +
+            "  if(h<0.2) return vec3(0.55,0.78,1.00);\n" +
+            "  if(h<0.4) return vec3(0.45,1.00,1.00);\n" +
+            "  if(h<0.6) return vec3(1.00,1.00,1.00);\n" +
+            "  if(h<0.8) return vec3(1.00,0.62,0.88);\n" +
+            "  return      vec3(0.55,1.00,0.82);\n" +
+            "}\n" +
+            "vec3 starLayer(vec2 uv,float den,float ox,float oy){\n" +
+            "  vec2 gp=uv*den+vec2(ox,oy);\n" +
+            "  vec2 cell=floor(gp),f=fract(gp);\n" +
+            "  float dn=vn(cell*0.02+vec2(ox*0.1,oy*0.1))*0.65+vn(cell*0.06+11.0)*0.35;\n" +
+            "  float dens=smoothstep(0.44,0.64,dn);\n" +
+            "  float thresh=0.972-dens*0.53;\n" +
+            // Galaxy haze with v3.1's pointillistic stipple: soft body + internal
+            // detail + high-freq grain curdled into sparse sharp specks.
+            "  float gdn=vn(gp*0.02+vec2(ox*0.1,oy*0.1))*0.55+vn(gp*0.055+11.0)*0.30+vn(gp*0.13+5.0)*0.15;\n" +
+            "  float galaxy=smoothstep(0.50,0.82,gdn); galaxy*=galaxy;\n" +
+            "  float gdet=0.5+0.5*vn(gp*0.20+vec2(3.0,7.0));\n" +
+            "  gdet*=0.6+0.4*vn(gp*0.42+vec2(9.0,2.0));\n" +
+            "  float grain=vn(gp*0.55+vec2(5.0,1.0))*0.55+vn(gp*1.20+vec2(2.0,8.0))*0.30+vn(gp*2.60+vec2(7.0,3.0))*0.15;\n" +
+            "  grain=smoothstep(0.46,0.78,grain); grain*=grain;\n" +
+            "  galaxy*=0.30+0.55*gdet+0.85*grain;\n" +
+            "  vec3 gcol=mix(vec3(0.52,0.42,0.50),vec3(0.82,0.62,0.52),smoothstep(0.62,0.96,gdn));\n" +
+            "  vec3 res=gcol*galaxy*0.11;\n" +
+            "  float h=h1(cell);\n" +
+            "  if(h>thresh){\n" +
+            "    vec2 df=f-h2(cell+3.7);\n" +
+            "    float d=length(df);\n" +
+            "    float mag=0.18+0.82*pow(h1(cell+7.7),3.0);\n" +
+            "    float canFlare=step(0.95,h1(cell+3.3));\n" +
+            "    float sid=h1(cell+1.9);\n" +
+            "    float ft=uTime*(0.012+0.025*h1(cell+5.3))+sid*40.0;\n" +
+            "    float flare=canFlare*smoothstep(0.88,1.0,vn(vec2(ft,sid*23.0)));\n" +
+            "    float bri=mag+flare*flare*3.5;\n" +
+            "    float rad=length(uv-0.5);\n" +
+            "    float soft=1.0+rad*rad*16.0;\n" +
+            "    float core=exp(-d*d*2500.0/soft)*bri;\n" +
+            "    float halo=exp(-d*d*100.0)*mag*0.15;\n" +
+            "    float spH=exp(-df.y*df.y*5000.0)*exp(-df.x*df.x*32.0);\n" +
+            "    float spV=exp(-df.x*df.x*5000.0)*exp(-df.y*df.y*32.0);\n" +
+            "    float spike=(spH+spV)*bri*bri*0.34;\n" +
+            "    res+=starCol(h1(cell+9.1))*(core+halo+spike);\n" +
+            "  }\n" +
+            "  return res;\n" +
+            "}\n" +
             "float rm(float v,float l,float h){ return clamp((v-l)/(h-l),0.0,1.0); }\n" +
             // ── Phase 3: density from the precomputed 3D noise TEXTURE (uniform, no
             // analytic noise / branching) — R=value fbm, G=inverted Worley billow. ──
@@ -653,10 +712,19 @@ public class NebulaDream extends DreamService {
             "  vec3 ro=vec3(sin(uTime*0.05)*0.7,cos(uTime*0.037)*0.5,uTime*0.40);\n" + // fly forward + gentle drift (off-axis)
             "  vec3 rd=normalize(vec3(uv,1.5));\n" +
             "  vec3 ldir=normalize(vec3(0.55,0.5,-0.35));\n" +
-            // nebula colour: large-scale per-pixel region tint (cheap), drifting
+            // nebula colour: v3.1's purple-centred 4-stop palette, driven by a
+            // drifting large-scale region field (warm accents stay rare).
             "  float reg=texture(uNoise,vec3(uv*0.35,uTime*0.02)).r;\n" +
-            "  vec3 sunCol=mix(vec3(1.00,0.50,0.32),vec3(1.00,0.42,0.74),reg);\n" + // orange<->magenta starlight
-            "  vec3 ambCol=mix(vec3(0.10,0.09,0.26),vec3(0.16,0.09,0.32),reg);\n" + // violet ambient
+            "  float temp=clamp((reg-0.5)*1.5+0.60,0.0,1.0);\n" +
+            "  vec3 warm=vec3(1.00,0.44,0.16);\n" +  // orange/red (rare warm accent)
+            "  vec3 pink=vec3(0.96,0.28,0.60);\n" +  // magenta-pink
+            "  vec3 midc=vec3(0.49,0.14,0.94);\n" +  // deep violet
+            "  vec3 cool=vec3(0.31,0.50,1.00);\n" +  // blue
+            "  vec3 tcol = (temp<0.33) ? mix(warm,pink,temp/0.33)\n" +
+            "             : (temp<0.66) ? mix(pink,midc,(temp-0.33)/0.33)\n" +
+            "                           : mix(midc,cool,(temp-0.66)/0.34);\n" +
+            "  vec3 sunCol=tcol;\n" +
+            "  vec3 ambCol=mix(vec3(0.09,0.07,0.24),tcol*0.30,0.40);\n" + // violet ambient tinted toward the region colour
             "  float cosT=dot(rd,ldir);\n" +
             "  float phase=hg(cosT,0.35)*0.7+hg(cosT,-0.12)*0.3;\n" + // forward lobe = silver lining
             "  float t=fract(sin(dot(gl_FragCoord.xy,vec2(41.3,289.1))+uTime)*43758.5)*0.16;\n" + // jittered start
@@ -678,8 +746,53 @@ public class NebulaDream extends DreamService {
             "    } else { t+=0.24; }\n" +
             "    if(t>26.0) break;\n" +
             "  }\n" +
-            "  col+=T*vec3(0.02,0.02,0.06);\n" +                     // faint background
-            "  fragColor=vec4(col,1.0);\n" +
+            "  col*=1.6;\n" + // cloud gain: scatter was tuned for raw output; compensate for the Reinhard tonemap
+
+            // ── Stars + galaxy haze BEHIND the clouds (v3.1 three-phase zooming
+            // star system), weighted by the ray's remaining transmittance T so
+            // dense masses occlude them and they shine through voids/thin gas. ──
+            "  vec3 bg=vec3(0.0);\n" +
+            "  float SZSP=0.0090*uZoom;\n" +
+            "  float SZMAX=0.75;\n" +
+            "  float ph=uTime*SZSP;\n" +
+            "  float t1=fract(ph+0.000);\n" +
+            "  float t2=fract(ph+0.333);\n" +
+            "  float t3=fract(ph+0.667);\n" +
+            "  float f1=smoothstep(0.00,0.40,t1)*(1.0-smoothstep(0.60,1.00,t1));\n" +
+            "  float f2=smoothstep(0.00,0.40,t2)*(1.0-smoothstep(0.60,1.00,t2));\n" +
+            "  float f3=smoothstep(0.00,0.40,t3)*(1.0-smoothstep(0.60,1.00,t3));\n" +
+            "  vec2 sc=vUv-0.5;\n" +
+            "  vec2 sr1=vec2(sc.x*0.951-sc.y*0.309, sc.x*0.309+sc.y*0.951);\n" +
+            "  vec2 sr2=vec2(sc.x*0.423-sc.y*0.906, sc.x*0.906+sc.y*0.423);\n" +
+            "  vec2 sr3=vec2(-sc.x*0.602-sc.y*0.799, sc.x*0.799-sc.y*0.602);\n" +
+            "  vec2 s1=sr1/exp(t1*SZMAX)+0.5;\n" +
+            "  vec2 s2=sr2/exp(t2*SZMAX)+0.5;\n" +
+            "  vec2 s3=sr3/exp(t3*SZMAX)+0.5;\n" +
+            "  bg+=starLayer(s1,80.0,0.00,0.00)*f1;\n" +
+            "  bg+=starLayer(s2,80.0,0.37,0.21)*f2*0.85;\n" +
+            "  bg+=starLayer(s3,80.0,0.71,0.53)*f3*0.70;\n" +
+            "  bg+=vec3(0.012,0.012,0.040);\n" +                     // faint deep-space floor
+            "  col+=T*bg;\n" +
+
+            // ── v3.1 output chain: hue drift, fade-in, desat rolloff, tonemap, HDR ─
+            "  float drift=uTime*0.0035;\n" +
+            "  col*=vec3(1.0)+0.10*vec3(sin(drift),sin(drift+2.0944),sin(drift+4.1888));\n" +
+            "  col*=smoothstep(0.0,10.0,uTime);\n" +
+            "  float pk=max(max(col.r,col.g),col.b);\n" +
+            "  float luma=dot(col,vec3(0.30,0.40,0.30));\n" +
+            "  col=mix(col,vec3(luma),smoothstep(0.95,2.2,pk)*0.6);\n" +
+            "  vec3 base=col/(col+vec3(0.85));\n" +
+            "  base=pow(max(base,vec3(0.0)),vec3(0.92))*1.12;\n" +
+            "  if(uHdr>0.5){\n" +
+            "    vec3 lin=pow(max(base,vec3(0.0)),vec3(2.2));\n" +
+            "    float lum=max(max(col.r,col.g),col.b);\n" +
+            "    float hi=max(lum-uHdrKnee,0.0);\n" +
+            "    float boost=uHdrGain*hi/(1.0+(uHdrGain/uHdrMax)*hi);\n" +
+            "    fragColor=vec4(lin+lin*boost,1.0);\n" +
+            "  } else {\n" +
+            "    base+=(h1(gl_FragCoord.xy)-0.5)/255.0;\n" +
+            "    fragColor=vec4(clamp(base,0.0,1.0),1.0);\n" +
+            "  }\n" +
             "}\n";
 
         private int prog, aPos, uTime, uRes, uZoom, uWrithe, uHdr, uHdrKnee, uHdrGain, uHdrMax;

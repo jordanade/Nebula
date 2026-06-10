@@ -205,3 +205,25 @@ reprojection becomes an optional quality stretch, not a requirement.
 **Phase 3 verdict: GO.** Perf is solved for practical purposes. Next is Phase 4
 (integrate stars/galaxy haze behind the clouds via transmittance, restore the HDR
 output path + full palette, real camera/motion, settings) and Phase 5 polish.
+
+### Phase 4 results — v3.1 integration ✅
+
+Ported **from v3.1** (per Jordan — not v3.0):
+- **Stars**: the full v3.1 three-phase zooming star system (density bands,
+  aperiodic flares, diffraction spikes) + **pointillistic galaxy haze** (soft body
+  + detail + grain curdled into specks). Composited **behind the clouds** weighted
+  by the ray's remaining transmittance `T` — dense masses occlude stars; voids and
+  thin gas let them through. Real depth ordering, free.
+- **Palette**: v3.1's purple-centred 4-stop ramp (orange → magenta-pink → deep
+  violet → blue, biased 0.60 toward violet), driving sun + ambient tint per region.
+- **Output chain**: v3.1's hue drift, fade-in, desat rolloff, Reinhard tonemap,
+  and the HDR scRGB-linear branch with knee/gain/max headroom boost. Cloud term
+  gains ×1.6 pre-tonemap (scatter was tuned for raw output).
+
+**Perf: still 30 fps at the cap** (~33 ms; stars + tonemap cost ~2 ms).
+**Look (raw captures, per Jordan's preference — no gamma):** violet cumulus with
+stars through the voids, haze, deep-space black. Reads as a nebula flythrough.
+
+**Remaining for Phase 5:** art direction (cloud scale/coverage/contrast tuning,
+HDR knee tuning for the flares), settings wiring (zoom/quality), idle/burn-in
+check, and the v3.0-shader cleanup decision (FRAG is now dead code in v4).
