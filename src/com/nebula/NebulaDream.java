@@ -735,18 +735,18 @@ public class NebulaDream extends DreamService {
             // ── NEBULA shading: highly-transparent EMISSIVE gas. No light march,
             // no phase — the gas GLOWS (emission nebula), it is not sunlit cloud.
             // Very low extinction: rays cross whole masses; stars shine through.
-            "  for(int i=0;i<48;i++){\n" +
+            "  for(int i=0;i<40;i++){\n" +                           // 40-step budget: worst case fits the 20fps frame budget
             "    if(T<0.07) break;\n" +                              // raised early-out: imperceptible, restores termination on translucent gas
             // Distance-adaptive stepping: near gas finely sampled, far gas coarser
             // (it is smaller on screen) — the same step budget reaches ~2x deeper.
-            "    float g=1.0+t*0.07;\n" +
+            "    float g=1.0+t*0.085;\n" +                           // slightly faster growth keeps the deep reach at 40 steps
             "    vec3 p=ro+rd*t;\n" +
             "    float d=dens(p);\n" +
             "    if(d>0.01){\n" +
             "      float dt=0.11*g;\n" +
             "      vec3 emit=tcol*d*0.55+ambCol*d*0.25;\n" +        // glow from within, region-coloured
             "      col+=T*emit*dt;\n" +
-            "      T*=exp(-d*dt*0.19);\n" +                         // near-transparent cores — stars visible through the densest gas
+            "      T*=exp(-d*dt*0.12);\n" +                         // ultra-transparent: stars through everything; also pins cost (no early-outs => constant frame time)
             "      t+=dt;\n" +
             "    } else { t+=0.24*g; }\n" +
             "    if(t>38.0) break;\n" +                              // deeper march range
