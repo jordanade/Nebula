@@ -697,13 +697,13 @@ public class NebulaDream extends DreamService {
             // Coverage: wide soft lower edge admits the SADDLES of the noise field
             // as thinner gas — the regions between adjacent masses — so disparate
             // clouds read as linked by connective bridges/filaments.
-            "  float cov=smoothstep(0.30,0.64,texture(uNoise,p*0.04+0.31).r);\n" +
+            "  float cov=smoothstep(0.22,0.62,texture(uNoise,p*0.04+0.31).r);\n" + // even wider saddle admission → stronger linking
             "  float d=rm(base,1.0-cov,1.0)*cov;\n" +
             "  float ero=texture(uNoise,p*0.34).g;\n" +              // Worley billow erosion
             "  d=rm(d,ero*0.32,1.0);\n" +
             "  float ero2=texture(uNoise,p*0.95).g;\n" +             // finer second erosion → sharp wispy edge detail
-            "  d=rm(d,ero2*0.38,1.0);\n" +                           // bite harder into the edges
-            "  return pow(d,2.2);\n" +                               // steeper falloff: crisp defined edges, thin interiors
+            "  d=rm(d,ero2*0.44,1.0);\n" +                           // bite harder into the edges
+            "  return pow(d,2.8);\n" +                               // steeper falloff: crisp defined edges, thin interiors
             "}\n" +
             "float densLow(vec3 p){\n" +                             // cheap density for the shadow march
             "  float base=texture(uNoise,p*0.10).r;\n" +
@@ -746,12 +746,12 @@ public class NebulaDream extends DreamService {
             "      float dt=0.11*g;\n" +
             "      vec3 emit=tcol*d*0.55+ambCol*d*0.25;\n" +        // glow from within, region-coloured
             "      col+=T*emit*dt;\n" +
-            "      T*=exp(-d*dt*0.28);\n" +                         // even lower extinction → ghostlier veils
+            "      T*=exp(-d*dt*0.19);\n" +                         // near-transparent cores — stars visible through the densest gas
             "      t+=dt;\n" +
             "    } else { t+=0.24*g; }\n" +
             "    if(t>38.0) break;\n" +                              // deeper march range
             "  }\n" +
-            "  col*=1.15;\n" + // gain for the tonemap
+            "  col*=0.95;\n" + // gain for the tonemap (slightly dimmer overall)
 
             // ── Stars + galaxy haze BEHIND the clouds (v3.1 three-phase zooming
             // star system), weighted by the ray's remaining transmittance T so
