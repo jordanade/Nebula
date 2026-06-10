@@ -1,6 +1,7 @@
 package com.nebula;
 
 import android.opengl.GLES20;
+import android.opengl.GLES30;
 import android.opengl.GLSurfaceView;
 import android.os.SystemClock;
 import android.service.dreams.DreamService;
@@ -28,7 +29,7 @@ public class NebulaDream extends DreamService {
         Prefs prefs = Prefs.from(this);
 
         GLSurfaceView sv = new GLSurfaceView(this);
-        sv.setEGLContextClientVersion(2);
+        sv.setEGLContextClientVersion(3); // v4: GLES 3.0 for sampler3D + glTexImage3D
         // HDR is opt-in and feature-detected; falls back to an 8-bit SDR
         // config when unsupported or disabled. The same object chooses the
         // config and creates the (optionally HDR-colorspace) window surface.
@@ -74,7 +75,7 @@ public class NebulaDream extends DreamService {
         private static final int EGL_GL_COLORSPACE_SCRGB_LINEAR_EXT = 0x3350;
         private static final int EGL_COLOR_COMPONENT_TYPE_EXT       = 0x3339;
         private static final int EGL_COLOR_COMPONENT_TYPE_FLOAT_EXT = 0x333B;
-        private static final int EGL_OPENGL_ES2_BIT = 0x0004;
+        private static final int EGL_OPENGL_ES3_BIT_KHR = 0x0040; // v4: request an ES3-capable config
         private static final int EGL_WINDOW_BIT     = 0x0004;
 
         private final String mode; // auto | on | off
@@ -92,7 +93,7 @@ public class NebulaDream extends DreamService {
 
             if (canHdr) {
                 EGLConfig c = pick(egl, display, new int[] {
-                    EGL10.EGL_RENDERABLE_TYPE, EGL_OPENGL_ES2_BIT,
+                    EGL10.EGL_RENDERABLE_TYPE, EGL_OPENGL_ES3_BIT_KHR,
                     EGL10.EGL_SURFACE_TYPE, EGL_WINDOW_BIT,
                     EGL_COLOR_COMPONENT_TYPE_EXT, EGL_COLOR_COMPONENT_TYPE_FLOAT_EXT,
                     EGL10.EGL_RED_SIZE, 16, EGL10.EGL_GREEN_SIZE, 16,
@@ -109,7 +110,7 @@ public class NebulaDream extends DreamService {
 
             hdrActive = false;
             EGLConfig c = pick(egl, display, new int[] {
-                EGL10.EGL_RENDERABLE_TYPE, EGL_OPENGL_ES2_BIT,
+                EGL10.EGL_RENDERABLE_TYPE, EGL_OPENGL_ES3_BIT_KHR,
                 EGL10.EGL_SURFACE_TYPE, EGL_WINDOW_BIT,
                 EGL10.EGL_RED_SIZE, 8, EGL10.EGL_GREEN_SIZE, 8,
                 EGL10.EGL_BLUE_SIZE, 8, EGL10.EGL_ALPHA_SIZE, 8,
@@ -160,6 +161,15 @@ public class NebulaDream extends DreamService {
         private static final String VERT =
             "attribute vec2 aPos;\n" +
             "varying vec2 vUv;\n" +
+            "void main(){\n" +
+            "  vUv=aPos*0.5+0.5;\n" +
+            "  gl_Position=vec4(aPos,0.0,1.0);\n" +
+            "}\n";
+
+        private static final String VERT_ES3 =
+            "#version 300 es\n" +
+            "in vec2 aPos;\n" +
+            "out vec2 vUv;\n" +
             "void main(){\n" +
             "  vUv=aPos*0.5+0.5;\n" +
             "  gl_Position=vec4(aPos,0.0,1.0);\n" +
@@ -612,58 +622,28 @@ public class NebulaDream extends DreamService {
         // to measure Tegra X1 raymarch throughput (go/no-go for the v4 build).
         // Analytic noise is a CONSERVATIVE bound; 3D-texture sampling would be cheaper.
         private static final String FRAG_SPIKE =
-            "#ifdef GL_FRAGMENT_PRECISION_HIGH\n" +
-            "  precision highp float;\n" +
-            "#else\n" +
-            "  precision mediump float;\n" +
-            "#endif\n" +
+            "#version 300 es\n" +
+            "precision highp float;\n" +
+            "precision highp sampler3D;\n" +
             "uniform float uTime;\n" +
             "uniform vec2  uRes;\n" +
-            "varying vec2  vUv;\n" +
-            "float h3(vec3 p){\n" +
-            "  p=fract(p*0.3183099+0.1); p*=17.0;\n" +
-            "  return fract(p.x*p.y*p.z*(p.x+p.y+p.z));\n" +
-            "}\n" +
-            "float vn3(vec3 x){\n" +
-            "  vec3 i=floor(x),f=fract(x); f=f*f*f*(f*(f*6.0-15.0)+10.0);\n" + // quintic: kills axis-aligned grid lines
-
-            "  return mix(mix(mix(h3(i+vec3(0.,0.,0.)),h3(i+vec3(1.,0.,0.)),f.x),\n" +
-            "                 mix(h3(i+vec3(0.,1.,0.)),h3(i+vec3(1.,1.,0.)),f.x),f.y),\n" +
-            "             mix(mix(h3(i+vec3(0.,0.,1.)),h3(i+vec3(1.,0.,1.)),f.x),\n" +
-            "                 mix(h3(i+vec3(0.,1.,1.)),h3(i+vec3(1.,1.,1.)),f.x),f.y),f.z);\n" +
-            "}\n" +
-            "float fbm3(vec3 p){\n" +
-            "  float v=0.0,a=0.5;\n" +
-            "  for(int i=0;i<3;i++){ v+=a*vn3(p); p=p*2.02+5.0; a*=0.5; }\n" +
-            "  return v;\n" +
-            "}\n" +
-            // ── Phase 1: cumulus density field (coverage x billow base, Worley-eroded) ─
-            "vec3 h33(vec3 p){\n" +
-            "  p=vec3(dot(p,vec3(127.1,311.7,74.7)),dot(p,vec3(269.5,183.3,246.1)),dot(p,vec3(113.5,271.9,124.6)));\n" +
-            "  return fract(sin(p)*43758.5453);\n" +
-            "}\n" +
-            "float worley3(vec3 p){\n" +
-            "  vec3 ip=floor(p),fp=fract(p); float d=1.0;\n" +
-            "  for(int z=-1;z<=1;z++){ for(int y=-1;y<=1;y++){ for(int x=-1;x<=1;x++){\n" +
-            "    vec3 g=vec3(float(x),float(y),float(z));\n" +
-            "    vec3 o=h33(ip+g); vec3 r=g+o-fp; d=min(d,dot(r,r));\n" +
-            "  }}}\n" +
-            "  return sqrt(d);\n" +
-            "}\n" +
+            "uniform sampler3D uNoise;\n" + // R = value fbm, G = inverted Worley (billow)
+            "in vec2 vUv;\n" +
+            "out vec4 fragColor;\n" +
             "float rm(float v,float l,float h){ return clamp((v-l)/(h-l),0.0,1.0); }\n" +
+            // ── Phase 3: density from the precomputed 3D noise TEXTURE (uniform, no
+            // analytic noise / branching) — R=value fbm, G=inverted Worley billow. ──
             "float dens(vec3 p){\n" +
-            "  float base=fbm3(p*0.45);\n" +                          // billow base shape
-            "  float cov=smoothstep(0.40,0.62,fbm3(p*0.20+7.0));\n" + // coverage: discrete masses vs open space
-            "  float d=rm(base,1.0-cov,1.0)*cov;\n" +                 // carve the base by coverage
-            "  float ero=1.0-worley3(p*1.5);\n" +                     // billowy Worley field
-            "  d=rm(d,ero*0.32,1.0);\n" +                             // erode edges into cauliflower
+            "  float base=texture(uNoise,p*0.10).r;\n" +              // billow base
+            "  float cov=smoothstep(0.42,0.66,texture(uNoise,p*0.04+0.31).r);\n" + // coverage: masses vs space
+            "  float d=rm(base,1.0-cov,1.0)*cov;\n" +
+            "  float ero=texture(uNoise,p*0.34).g;\n" +              // Worley billow → cauliflower erosion
+            "  d=rm(d,ero*0.32,1.0);\n" +
             "  return d;\n" +
             "}\n" +
-            // Cheap density (NO Worley) for the shadow light-march — it only needs an
-            // approximate optical depth toward the light, not the fine cauliflower.
-            "float densLow(vec3 p){\n" +
-            "  float base=fbm3(p*0.45);\n" +
-            "  float cov=smoothstep(0.40,0.62,fbm3(p*0.20+7.0));\n" +
+            "float densLow(vec3 p){\n" +                             // cheap density for the shadow march
+            "  float base=texture(uNoise,p*0.10).r;\n" +
+            "  float cov=smoothstep(0.42,0.66,texture(uNoise,p*0.04+0.31).r);\n" +
             "  return rm(base,1.0-cov,1.0)*cov*0.85;\n" +
             "}\n" +
             // ── Phase 2: HG phase (silver lining) + powder + violet ambient + palette ─
@@ -674,12 +654,12 @@ public class NebulaDream extends DreamService {
             "  vec3 rd=normalize(vec3(uv,1.5));\n" +
             "  vec3 ldir=normalize(vec3(0.55,0.5,-0.35));\n" +
             // nebula colour: large-scale per-pixel region tint (cheap), drifting
-            "  float reg=vn3(vec3(uv*1.3+uTime*0.02,uTime*0.05));\n" +
+            "  float reg=texture(uNoise,vec3(uv*0.35,uTime*0.02)).r;\n" +
             "  vec3 sunCol=mix(vec3(1.00,0.50,0.32),vec3(1.00,0.42,0.74),reg);\n" + // orange<->magenta starlight
             "  vec3 ambCol=mix(vec3(0.10,0.09,0.26),vec3(0.16,0.09,0.32),reg);\n" + // violet ambient
             "  float cosT=dot(rd,ldir);\n" +
             "  float phase=hg(cosT,0.35)*0.7+hg(cosT,-0.12)*0.3;\n" + // forward lobe = silver lining
-            "  float t=h3(vec3(gl_FragCoord.xy,uTime))*0.16;\n" +    // jittered start
+            "  float t=fract(sin(dot(gl_FragCoord.xy,vec2(41.3,289.1))+uTime)*43758.5)*0.16;\n" + // jittered start
             "  float T=1.0; vec3 col=vec3(0.0);\n" +
             "  for(int i=0;i<64;i++){\n" +
             "    if(T<0.02) break;\n" +
@@ -699,10 +679,11 @@ public class NebulaDream extends DreamService {
             "    if(t>26.0) break;\n" +
             "  }\n" +
             "  col+=T*vec3(0.02,0.02,0.06);\n" +                     // faint background
-            "  gl_FragColor=vec4(col,1.0);\n" +
+            "  fragColor=vec4(col,1.0);\n" +
             "}\n";
 
         private int prog, aPos, uTime, uRes, uZoom, uWrithe, uHdr, uHdrKnee, uHdrGain, uHdrMax;
+        private int uNoise, noiseTex; // v4: 3D noise texture
         private FloatBuffer quadBuf;
         private long startMs;
         private long lastDrawMs;
@@ -737,9 +718,11 @@ public class NebulaDream extends DreamService {
             // On context recreation (e.g. resume), drop the stale program first.
             if (prog!=0) { GLES20.glDeleteProgram(prog); prog=0; }
             lastDrawMs=0;
-            prog  = buildProg(VERT, FRAG_SPIKE); // PHASE 0 SPIKE (swap back to FRAG for v3.0)
+            prog  = buildProg(VERT_ES3, FRAG_SPIKE); // v4 raymarcher (ES3)
             aPos  = GLES20.glGetAttribLocation(prog,"aPos");
             uTime = GLES20.glGetUniformLocation(prog,"uTime");
+            uNoise = GLES20.glGetUniformLocation(prog,"uNoise");
+            noiseTex = buildNoiseTexture(64); // re-upload each context (ids go stale); CPU gen is cached
             uRes  = GLES20.glGetUniformLocation(prog,"uRes");
             uZoom = GLES20.glGetUniformLocation(prog,"uZoom");
             uWrithe = GLES20.glGetUniformLocation(prog,"uWrithe");
@@ -791,6 +774,9 @@ public class NebulaDream extends DreamService {
             GLES20.glUniform1f(uHdrKnee,HDR_KNEE);
             GLES20.glUniform1f(uHdrGain,HDR_GAIN);
             GLES20.glUniform1f(uHdrMax,HDR_MAX);
+            GLES20.glActiveTexture(GLES20.GL_TEXTURE0);
+            GLES30.glBindTexture(GLES30.GL_TEXTURE_3D,noiseTex);
+            GLES20.glUniform1i(uNoise,0);
             quadBuf.position(0);
             GLES20.glVertexAttribPointer(aPos,2,GLES20.GL_FLOAT,false,8,quadBuf);
             GLES20.glEnableVertexAttribArray(aPos);
@@ -819,6 +805,83 @@ public class NebulaDream extends DreamService {
             GLES20.glDeleteShader(v);
             GLES20.glDeleteShader(f);
             return p;
+        }
+
+        // ── v4: tiling 3D noise texture (R = 3-octave value fbm, G = inverted
+        // Worley billow). Generated once on the CPU (cached buffer), uploaded with
+        // glTexImage3D + REPEAT so the volume tiles seamlessly. Replacing analytic
+        // noise with fetches removes the marcher's ALU cost uniformly. ─────────────
+        private static ByteBuffer noiseBuf; // cached across context recreations
+
+        private static float hashN(int x,int y,int z){
+            int h=x*374761393 + y*668265263 + z*2147483647;
+            h=(h^(h>>13))*1274126177;
+            return ((h^(h>>16)) & 0x7fffffff)/(float)0x7fffffff;
+        }
+        // Tiling value noise on a 'per'-periodic lattice with quintic interpolation.
+        private static float vnoise(float px,float py,float pz,int per){
+            int x0=(int)Math.floor(px), y0=(int)Math.floor(py), z0=(int)Math.floor(pz);
+            float fx=px-x0, fy=py-y0, fz=pz-z0;
+            float ux=fx*fx*fx*(fx*(fx*6-15)+10), uy=fy*fy*fy*(fy*(fy*6-15)+10), uz=fz*fz*fz*(fz*(fz*6-15)+10);
+            float v=0f;
+            for(int dz=0;dz<=1;dz++) for(int dy=0;dy<=1;dy++) for(int dx=0;dx<=1;dx++){
+                float w=(dx==0?1-ux:ux)*(dy==0?1-uy:uy)*(dz==0?1-uz:uz);
+                v+=w*hashN(((x0+dx)%per+per)%per, ((y0+dy)%per+per)%per, ((z0+dz)%per+per)%per);
+            }
+            return v;
+        }
+        // Tiling Worley: feature point per cell, wrap the cell lookup by 'per'.
+        private static float worleyN(float px,float py,float pz,int per){
+            int x0=(int)Math.floor(px), y0=(int)Math.floor(py), z0=(int)Math.floor(pz);
+            float best=8f;
+            for(int dz=-1;dz<=1;dz++) for(int dy=-1;dy<=1;dy++) for(int dx=-1;dx<=1;dx++){
+                int cx=x0+dx, cy=y0+dy, cz=z0+dz;
+                int wx=((cx%per)+per)%per, wy=((cy%per)+per)%per, wz=((cz%per)+per)%per;
+                float ox=hashN(wx,wy,wz), oy=hashN(wx+57,wy+113,wz+271), oz=hashN(wx+733,wy+929,wz+101);
+                float rx=cx+ox-px, ry=cy+oy-py, rz=cz+oz-pz;
+                float d=rx*rx+ry*ry+rz*rz;
+                if(d<best) best=d;
+            }
+            return (float)Math.sqrt(best);
+        }
+
+        private int buildNoiseTexture(int N){
+            if (noiseBuf==null) {
+                long t0=SystemClock.elapsedRealtime();
+                noiseBuf=ByteBuffer.allocateDirect(N*N*N*2).order(ByteOrder.nativeOrder());
+                for(int z=0;z<N;z++){
+                    float pz=z/(float)N;
+                    for(int y=0;y<N;y++){
+                        float py=y/(float)N;
+                        for(int x=0;x<N;x++){
+                            float px=x/(float)N;
+                            // R: 3-octave tiling value fbm (periods 4,8,16 inside the volume)
+                            float f=0.5333f*vnoise(px*4,py*4,pz*4,4)
+                                   +0.2667f*vnoise(px*8,py*8,pz*8,8)
+                                   +0.1333f*vnoise(px*16,py*16,pz*16,16);
+                            // G: inverted Worley billow (period 6), 2 octaves
+                            float w=1f-worleyN(px*6,py*6,pz*6,6);
+                            float w2=1f-worleyN(px*12,py*12,pz*12,12);
+                            float g=Math.max(0f,Math.min(1f,w*0.65f+w2*0.35f));
+                            noiseBuf.put((byte)(Math.max(0f,Math.min(1f,f))*255));
+                            noiseBuf.put((byte)(g*255));
+                        }
+                    }
+                }
+                Log.i(TAG,"3D noise "+N+"^3 generated in "+(SystemClock.elapsedRealtime()-t0)+"ms");
+            }
+            noiseBuf.position(0);
+            int[] tex=new int[1];
+            GLES20.glGenTextures(1,tex,0);
+            GLES30.glBindTexture(GLES30.GL_TEXTURE_3D,tex[0]);
+            GLES30.glTexImage3D(GLES30.GL_TEXTURE_3D,0,GLES30.GL_RG8,N,N,N,0,
+                GLES30.GL_RG,GLES30.GL_UNSIGNED_BYTE,noiseBuf);
+            GLES30.glTexParameteri(GLES30.GL_TEXTURE_3D,GLES20.GL_TEXTURE_MIN_FILTER,GLES20.GL_LINEAR);
+            GLES30.glTexParameteri(GLES30.GL_TEXTURE_3D,GLES20.GL_TEXTURE_MAG_FILTER,GLES20.GL_LINEAR);
+            GLES30.glTexParameteri(GLES30.GL_TEXTURE_3D,GLES20.GL_TEXTURE_WRAP_S,GLES20.GL_REPEAT);
+            GLES30.glTexParameteri(GLES30.GL_TEXTURE_3D,GLES20.GL_TEXTURE_WRAP_T,GLES20.GL_REPEAT);
+            GLES30.glTexParameteri(GLES30.GL_TEXTURE_3D,GLES30.GL_TEXTURE_WRAP_R,GLES20.GL_REPEAT);
+            return tex[0];
         }
         private int shader(int type,String src){
             int s=GLES20.glCreateShader(type);

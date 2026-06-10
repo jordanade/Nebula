@@ -178,3 +178,30 @@ the marcher must stay branch-light; the real wins come from removing work
 reprojection (~2×) ≈ ~30 fps. **Viable, but only with the full stack** — exactly
 the scope's conditional-go. Next: the GLES 3.0 + 3D-texture migration (the big
 build).
+
+### Phase 3 (part 2) — GLES 3.0 + 3D-texture noise ✅ THE BREAKTHROUGH
+
+Migrated: ES3 context (`setEGLContextClientVersion(3)`, `EGL_OPENGL_ES3_BIT_KHR`
+config), `#version 300 es` shaders, and a CPU-generated **tiling 64³ RG8 3D noise
+texture** (R = 3-octave quintic value-fbm at periods 4/8/16, G = 2-octave inverted
+Worley at periods 6/12), uploaded once via `glTexImage3D` (REPEAT, LINEAR; buffer
+cached across context recreations; ~0.8 s one-time CPU generation). The marcher's
+density is now pure texture fetches — zero analytic noise.
+
+| Config | fps | GPU/frame |
+|---|---|---|
+| 0.35, analytic noise | 5.0 | ~200 ms |
+| 0.35, **3D-texture noise** | **30 (at cap)** | **~31 ms** |
+
+**~6.5× speedup** — beating the 3–4× estimate. At 672×378 the raymarcher now sits
+AT the 30 fps cap (~93% duty). Look survived: violet cumulus, lit edges,
+cauliflower, voids.
+
+**Implication: temporal reprojection may not be needed.** Linear pixel scaling
+predicts ~15 fps at 0.5 scale, ~30 fps at 0.35. A soft volumetric subject
+upscales gracefully, so 0.35–0.4 + the display scaler is likely shippable as-is —
+reprojection becomes an optional quality stretch, not a requirement.
+
+**Phase 3 verdict: GO.** Perf is solved for practical purposes. Next is Phase 4
+(integrate stars/galaxy haze behind the clouds via transmittance, restore the HDR
+output path + full palette, real camera/motion, settings) and Phase 5 polish.
