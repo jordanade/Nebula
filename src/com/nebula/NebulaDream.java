@@ -751,22 +751,27 @@ public class NebulaDream extends DreamService {
             "    float g=1.0+t*0.10;\n" +
             "    vec3 p=ro+rd*t;\n" +
             "    float d=(t<13.0)?dens(p):densFar(p);\n" +           // full detail near, cheap cache-friendly density far
+            // Per-sample dither (~1 LSB of the RG8 texture): breaks the 8-bit
+            // quantization iso-contours that read as an interference pattern.
+            "    d=max(d+(fract(sin(dot(p.xy+vec2(p.z),vec2(12.9898,78.233)))*43758.55)-0.5)*0.010,0.0);\n" +
             "    if(d>0.01){\n" +
             "      float dt=0.11*g;\n" +
             "      vec3 emit=tcol*d*0.55+ambCol*d*0.25;\n" +        // glow from within, region-coloured
-            // Relief: directional gradient on the near layers (lit side vs dark side).
+            // Relief + rims on the NEAR layers only; mid/rear stays pure soft glow
+            // (far rims were stacking into a bright wall).
             "      if(t<13.0){\n" +
             "        float ds=densFar(p);\n" +
             "        float dlit=densFar(p+ldir*0.34);\n" +
             "        float lit=clamp((ds-dlit)*9.0,0.0,1.0);\n" +
             "        emit*=0.50+1.8*lit;\n" +
+            // EDGE: ionization-front rim — fires when the ray crosses a boundary
+            // (density jumping from ~nothing to substantial between samples).
+            "        float rim=clamp((d-dPrev)*9.0,0.0,1.0)*clamp(1.0-dPrev*8.0,0.0,1.0);\n" +
+            "        emit+=tcol*rim*0.8;\n" +
             "      }\n" +
-            // EDGE: ionization-front rim. When the ray CROSSES a boundary (density
-            // jumps from ~nothing to substantial between consecutive samples), fire
-            // a thin bright rim spike — a luminous outline along every silhouette,
-            // the astrophoto bright-rim signature. Free: no extra fetches.
-            "      float rim=clamp((d-dPrev)*9.0,0.0,1.0)*clamp(1.0-dPrev*8.0,0.0,1.0);\n" +
-            "      emit+=tcol*rim*0.8;\n" +                          // region-coloured rims (no white mix), gentler
+            // Distance falloff: deep gas contributes progressively less, so the
+            // mid/rear stack reads as faint depth, not an accumulated bright wall.
+            "      emit*=1.0/(1.0+t*0.055);\n" +
             "      col+=T*emit*dt;\n" +
             "      T*=exp(-d*dt*0.08);\n" +                         // ultra-transparent: stars through everything; also pins cost (no early-outs => constant frame time)
             "      t+=dt;\n" +
@@ -989,6 +994,10 @@ public class NebulaDream extends DreamService {
         private int buildNoiseTexture(int N){
             if (noiseBuf==null) {
                 long t0=SystemClock.elapsedRealtime();
+                // RG8 deliberately: RG16F was tried for the quantization banding and
+                // DOUBLED frame cost (2x texel bytes halves the effective texture
+                // cache — this marcher is cache-bound). Banding is instead broken up
+                // by a per-sample density dither in the march loop.
                 noiseBuf=ByteBuffer.allocateDirect(N*N*N*2).order(ByteOrder.nativeOrder());
                 for(int z=0;z<N;z++){
                     float pz=z/(float)N;
