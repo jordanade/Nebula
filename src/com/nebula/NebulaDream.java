@@ -743,7 +743,8 @@ public class NebulaDream extends DreamService {
             // Very low extinction: rays cross whole masses; stars shine through.
             // 56 steps + faster growth + bigger empty strides: spends the banked
             // perf headroom on REACH (~3x the old effective depth).
-            "  for(int i=0;i<50;i++){\n" +                           // trimmed to pay for the near relief/detail
+            "  float dPrev=0.0;\n" +                                 // previous sample's density (for boundary rims)
+            "  for(int i=0;i<46;i++){\n" +
             "    if(T<0.07) break;\n" +                              // raised early-out: imperceptible, restores termination on translucent gas
             // Distance-adaptive stepping: near gas finely sampled, far gas coarser
             // (it is smaller on screen) — the step budget reaches far deeper.
@@ -753,19 +754,25 @@ public class NebulaDream extends DreamService {
             "    if(d>0.01){\n" +
             "      float dt=0.11*g;\n" +
             "      vec3 emit=tcol*d*0.55+ambCol*d*0.25;\n" +        // glow from within, region-coloured
-            // Relief lighting on the NEAR layers: probe density a short step toward
-            // the light; where it falls off (light-facing edge of a veil), brighten.
-            // Sculpts lit edges + form into the near gas; far layers stay soft glow.
+            // Relief: directional gradient on the near layers (lit side vs dark side).
             "      if(t<13.0){\n" +
-            "        float dlit=densFar(p+ldir*0.30);\n" +
-            "        float lit=clamp((d-dlit)*4.0,0.0,1.0);\n" +
-            "        emit*=0.72+0.75*lit;\n" +
+            "        float ds=densFar(p);\n" +
+            "        float dlit=densFar(p+ldir*0.34);\n" +
+            "        float lit=clamp((ds-dlit)*9.0,0.0,1.0);\n" +
+            "        emit*=0.50+1.8*lit;\n" +
             "      }\n" +
+            // EDGE: ionization-front rim. When the ray CROSSES a boundary (density
+            // jumps from ~nothing to substantial between consecutive samples), fire
+            // a thin bright rim spike — a luminous outline along every silhouette,
+            // the astrophoto bright-rim signature. Free: no extra fetches.
+            "      float rim=clamp((d-dPrev)*9.0,0.0,1.0)*clamp(1.0-dPrev*8.0,0.0,1.0);\n" +
+            "      emit+=mix(tcol,vec3(1.0),0.35)*rim*1.4;\n" +
             "      col+=T*emit*dt;\n" +
             "      T*=exp(-d*dt*0.12);\n" +                         // ultra-transparent: stars through everything; also pins cost (no early-outs => constant frame time)
             "      t+=dt;\n" +
             "    } else { t+=0.28*g; }\n" +
-            "    if(t>48.0) break;\n" +                              // deep march range (slightly trimmed for the near relief)
+            "    dPrev=d;\n" +
+            "    if(t>48.0) break;\n" +                              // deep march range
             "  }\n" +
             "  col*=0.95;\n" + // gain for the tonemap (slightly dimmer overall)
 
