@@ -633,6 +633,7 @@ public class NebulaDream extends DreamService {
             "uniform float uHdrGain;\n" +
             "uniform float uHdrMax;\n" +
             "uniform sampler3D uNoise;\n" + // R = value fbm, G = inverted Worley (billow)
+            "uniform vec4 uGFlare;\n" +     // giant flare overlay: xy=pos, z=envelope, w=hue
             "in vec2 vUv;\n" +
             "out vec4 fragColor;\n" +
             // ── Stars + pointillistic galaxy haze, ported faithfully from v3.1 ──
@@ -675,6 +676,9 @@ public class NebulaDream extends DreamService {
             "    float mag=0.18+0.82*pow(h1(cell+7.7),3.0);\n" +
             "    float canFlare=step(0.95,h1(cell+3.3));\n" +
             "    float sid=h1(cell+1.9);\n" +
+            // Per-cell flares stay modest (v3.1 behaviour) — a cell-hashed star's
+            // spikes cannot extend past its own grid cell, so the BIG dramatic
+            // crosshatch flares are a separate screen-space overlay (uGFlare).
             "    float ft=uTime*(0.012+0.025*h1(cell+5.3))+sid*40.0;\n" +
             "    float flare=canFlare*smoothstep(0.88,1.0,vn(vec2(ft,sid*23.0)));\n" +
             "    float bri=mag+flare*flare*3.5;\n" +
@@ -697,7 +701,7 @@ public class NebulaDream extends DreamService {
             // Coverage: wide soft lower edge admits the SADDLES of the noise field
             // as thinner gas — the regions between adjacent masses — so disparate
             // clouds read as linked by connective bridges/filaments.
-            "  float cov=smoothstep(0.22,0.62,texture(uNoise,p*0.04+0.31).r);\n" + // even wider saddle admission → stronger linking
+            "  float cov=smoothstep(0.34,0.64,texture(uNoise,p*0.04+0.31).r);\n" + // even wider saddle admission → stronger linking
             "  float d=rm(base,1.0-cov,1.0)*cov;\n" +
             "  float ero=texture(uNoise,p*0.34).g;\n" +              // Worley billow erosion
             "  d=rm(d,ero*0.32,1.0);\n" +
@@ -711,7 +715,7 @@ public class NebulaDream extends DreamService {
             // the texture cache with the full 4-fetch dens().
             "float densFar(vec3 p){\n" +
             "  float base=texture(uNoise,p*0.10).r;\n" +
-            "  float cov=smoothstep(0.22,0.62,texture(uNoise,p*0.04+0.31).r);\n" +
+            "  float cov=smoothstep(0.34,0.64,texture(uNoise,p*0.04+0.31).r);\n" +
             "  float d=rm(base,1.0-cov,1.0)*cov;\n" +
             "  d=rm(d,0.22,1.0);\n" +                                // approximate the erosion's average bite
             "  return pow(d,2.8)*0.9;\n" +
@@ -805,6 +809,21 @@ public class NebulaDream extends DreamService {
             "  bg+=starLayer(s2,80.0,0.37,0.21)*f2*0.85;\n" +
             "  bg+=starLayer(s3,80.0,0.71,0.53)*f3*0.70;\n" +
             "  bg+=vec3(0.012,0.012,0.040);\n" +                     // faint deep-space floor
+            // ── GIANT FLARE overlay: rare, slow, screen-scale 8-point crosshatch.
+            // CPU-scheduled (position/timing/hue via uGFlare); drawn into the
+            // background so the nebula gas occludes it naturally. Intensity far
+            // above the HDR knee → the panel's peak brightness at the core.
+            "  if(uGFlare.z>0.001){\n" +
+            "    vec2 fd=vUv-uGFlare.xy; fd.x*=uRes.x/uRes.y;\n" +
+            "    float fc=exp(-dot(fd,fd)*3200.0)*2.5;\n" +
+            "    float aH=exp(-fd.y*fd.y*22000.0)*exp(-fd.x*fd.x*55.0);\n" +
+            "    float aV=exp(-fd.x*fd.x*22000.0)*exp(-fd.y*fd.y*55.0);\n" +
+            "    vec2 dgg=vec2(fd.x+fd.y,fd.x-fd.y)*0.7071;\n" +
+            "    float aD=exp(-dgg.y*dgg.y*26000.0)*exp(-dgg.x*dgg.x*95.0)\n" +
+            "             +exp(-dgg.x*dgg.x*26000.0)*exp(-dgg.y*dgg.y*95.0);\n" +
+            "    vec3 gc=mix(vec3(1.0),starCol(uGFlare.w),0.45);\n" +
+            "    bg+=gc*(fc+(aH+aV)*1.0+aD*0.5)*uGFlare.z*4.5;\n" +
+            "  }\n" +
             "  col+=T*bg;\n" +
 
             // ── v3.1 output chain: hue drift, fade-in, desat rolloff, tonemap, HDR ─
@@ -830,6 +849,10 @@ public class NebulaDream extends DreamService {
 
         private int prog, aPos, uTime, uRes, uZoom, uWrithe, uHdr, uHdrKnee, uHdrGain, uHdrMax;
         private int uNoise, noiseTex; // v4: 3D noise texture
+        // v4: giant-flare overlay scheduling (rare, slow, screen-scale crosshatch)
+        private int uGFlare;
+        private final java.util.Random gfRng = new java.util.Random();
+        private float gfX, gfY, gfHue, gfStart = -1f, gfDur = 1f, gfNext = 25f;
         private FloatBuffer quadBuf;
         private long startMs;
         private long lastDrawMs;
@@ -868,6 +891,7 @@ public class NebulaDream extends DreamService {
             aPos  = GLES20.glGetAttribLocation(prog,"aPos");
             uTime = GLES20.glGetUniformLocation(prog,"uTime");
             uNoise = GLES20.glGetUniformLocation(prog,"uNoise");
+            uGFlare = GLES20.glGetUniformLocation(prog,"uGFlare");
             noiseTex = buildNoiseTexture(64); // re-upload each context (ids go stale); CPU gen is cached
             uRes  = GLES20.glGetUniformLocation(prog,"uRes");
             uZoom = GLES20.glGetUniformLocation(prog,"uZoom");
@@ -920,6 +944,23 @@ public class NebulaDream extends DreamService {
             GLES20.glUniform1f(uHdrKnee,HDR_KNEE);
             GLES20.glUniform1f(uHdrGain,HDR_GAIN);
             GLES20.glUniform1f(uHdrMax,HDR_MAX);
+            // Giant flare scheduling: one at a time, every ~30-70 s, swelling and
+            // fading over 8-14 s (sin^2 envelope — the brighter, the slower).
+            if (t >= gfNext) {
+                gfStart = t;
+                gfDur   = 8f + gfRng.nextFloat()*6f;
+                gfX     = 0.20f + 0.60f*gfRng.nextFloat();
+                gfY     = 0.20f + 0.60f*gfRng.nextFloat();
+                gfHue   = gfRng.nextFloat();
+                gfNext  = t + 30f + gfRng.nextFloat()*40f;
+            }
+            float gfEnv = 0f;
+            if (gfStart >= 0f && t < gfStart + gfDur) {
+                float ph = (t - gfStart) / gfDur;
+                float s = (float)Math.sin(Math.PI * ph);
+                gfEnv = s*s;
+            }
+            GLES20.glUniform4f(uGFlare, gfX, gfY, gfEnv, gfHue);
             GLES20.glActiveTexture(GLES20.GL_TEXTURE0);
             GLES30.glBindTexture(GLES30.GL_TEXTURE_3D,noiseTex);
             GLES20.glUniform1i(uNoise,0);
