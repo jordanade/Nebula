@@ -766,9 +766,9 @@ public class NebulaDream extends DreamService {
             // a thin bright rim spike — a luminous outline along every silhouette,
             // the astrophoto bright-rim signature. Free: no extra fetches.
             "      float rim=clamp((d-dPrev)*9.0,0.0,1.0)*clamp(1.0-dPrev*8.0,0.0,1.0);\n" +
-            "      emit+=mix(tcol,vec3(1.0),0.35)*rim*1.4;\n" +
+            "      emit+=tcol*rim*0.8;\n" +                          // region-coloured rims (no white mix), gentler
             "      col+=T*emit*dt;\n" +
-            "      T*=exp(-d*dt*0.12);\n" +                         // ultra-transparent: stars through everything; also pins cost (no early-outs => constant frame time)
+            "      T*=exp(-d*dt*0.08);\n" +                         // ultra-transparent: stars through everything; also pins cost (no early-outs => constant frame time)
             "      t+=dt;\n" +
             "    } else { t+=0.28*g; }\n" +
             "    dPrev=d;\n" +
