@@ -705,10 +705,16 @@ public class NebulaDream extends DreamService {
             "  d=rm(d,ero2*0.44,1.0);\n" +                           // bite harder into the edges
             "  return pow(d,2.8);\n" +                               // steeper falloff: crisp defined edges, thin interiors
             "}\n" +
-            "float densLow(vec3 p){\n" +                             // cheap density for the shadow march
+            // Cheap far-field density (2 low-freq fetches, no erosion detail): used
+            // beyond the detail horizon where cauliflower edges are sub-pixel anyway.
+            // Low-freq coords are also cache-friendly — big strides were thrashing
+            // the texture cache with the full 4-fetch dens().
+            "float densFar(vec3 p){\n" +
             "  float base=texture(uNoise,p*0.10).r;\n" +
-            "  float cov=smoothstep(0.42,0.66,texture(uNoise,p*0.04+0.31).r);\n" +
-            "  return rm(base,1.0-cov,1.0)*cov*0.85;\n" +
+            "  float cov=smoothstep(0.22,0.62,texture(uNoise,p*0.04+0.31).r);\n" +
+            "  float d=rm(base,1.0-cov,1.0)*cov;\n" +
+            "  d=rm(d,0.22,1.0);\n" +                                // approximate the erosion's average bite
+            "  return pow(d,2.8)*0.9;\n" +
             "}\n" +
             // ── Phase 2: HG phase (silver lining) + powder + violet ambient + palette ─
             "float hg(float c,float g){ float g2=g*g; return (1.0-g2)/pow(max(1.0+g2-2.0*g*c,1e-3),1.5); }\n" +
@@ -735,21 +741,23 @@ public class NebulaDream extends DreamService {
             // ── NEBULA shading: highly-transparent EMISSIVE gas. No light march,
             // no phase — the gas GLOWS (emission nebula), it is not sunlit cloud.
             // Very low extinction: rays cross whole masses; stars shine through.
-            "  for(int i=0;i<40;i++){\n" +                           // 40-step budget: worst case fits the 20fps frame budget
+            // 56 steps + faster growth + bigger empty strides: spends the banked
+            // perf headroom on REACH (~3x the old effective depth).
+            "  for(int i=0;i<56;i++){\n" +
             "    if(T<0.07) break;\n" +                              // raised early-out: imperceptible, restores termination on translucent gas
             // Distance-adaptive stepping: near gas finely sampled, far gas coarser
-            // (it is smaller on screen) — the same step budget reaches ~2x deeper.
-            "    float g=1.0+t*0.085;\n" +                           // slightly faster growth keeps the deep reach at 40 steps
+            // (it is smaller on screen) — the step budget reaches far deeper.
+            "    float g=1.0+t*0.10;\n" +
             "    vec3 p=ro+rd*t;\n" +
-            "    float d=dens(p);\n" +
+            "    float d=(t<13.0)?dens(p):densFar(p);\n" +           // full detail near, cheap cache-friendly density far
             "    if(d>0.01){\n" +
             "      float dt=0.11*g;\n" +
             "      vec3 emit=tcol*d*0.55+ambCol*d*0.25;\n" +        // glow from within, region-coloured
             "      col+=T*emit*dt;\n" +
             "      T*=exp(-d*dt*0.12);\n" +                         // ultra-transparent: stars through everything; also pins cost (no early-outs => constant frame time)
             "      t+=dt;\n" +
-            "    } else { t+=0.24*g; }\n" +
-            "    if(t>38.0) break;\n" +                              // deeper march range
+            "    } else { t+=0.28*g; }\n" +
+            "    if(t>60.0) break;\n" +                              // far deeper march range
             "  }\n" +
             "  col*=0.95;\n" + // gain for the tonemap (slightly dimmer overall)
 
