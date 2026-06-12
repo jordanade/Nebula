@@ -652,28 +652,27 @@ public class NebulaDream extends DreamService {
             // ── Phase 3: density from the precomputed 3D noise TEXTURE (uniform, no
             // analytic noise / branching) — R=value fbm, G=inverted Worley billow. ──
             "float dens(vec3 p){\n" +
-            "  float base=texture(uNoise,p*0.10).r;\n" +              // billow base
-            // Coverage: wide soft lower edge admits the SADDLES of the noise field
-            // as thinner gas — the regions between adjacent masses — so disparate
-            // clouds read as linked by connective bridges/filaments.
-            "  float cov=smoothstep(0.34,0.64,texture(uNoise,p*0.04+0.31).r);\n" + // even wider saddle admission → stronger linking
+            "  float base=texture(uNoise,p*0.075).r;\n" +             // larger billow base
+            // Coverage: low-frequency gate makes fewer, larger cloud masses while
+            // still rejecting the weakest saddles between them.
+            "  float cov=smoothstep(0.39,0.68,texture(uNoise,p*0.027+0.31).r);\n" +
             "  float d=rm(base,1.0-cov,1.0)*cov;\n" +
-            "  float ero=texture(uNoise,p*0.34).g;\n" +              // Worley billow erosion
-            "  d=rm(d,ero*0.32,1.0);\n" +
-            "  float ero2=texture(uNoise,p*0.95).g;\n" +             // finer second erosion → sharp wispy edge detail
-            "  d=rm(d,ero2*0.44,1.0);\n" +                           // bite harder into the edges
-            "  return pow(d,2.8);\n" +                               // steeper falloff: crisp defined edges, thin interiors
+            "  float ero=texture(uNoise,p*0.22).g;\n" +              // broad Worley erosion
+            "  d=rm(d,ero*0.24,1.0);\n" +
+            "  float ero2=texture(uNoise,p*0.58).g;\n" +             // restrained fine erosion; avoids clumpy breakup
+            "  d=rm(d,ero2*0.26,1.0);\n" +
+            "  return pow(d,2.45);\n" +                              // fuller interiors for larger readable masses
             "}\n" +
             // Cheap far-field density (2 low-freq fetches, no erosion detail): used
             // beyond the detail horizon where cauliflower edges are sub-pixel anyway.
             // Low-freq coords are also cache-friendly — big strides were thrashing
             // the texture cache with the full 4-fetch dens().
             "float densFar(vec3 p){\n" +
-            "  float base=texture(uNoise,p*0.10).r;\n" +
-            "  float cov=smoothstep(0.34,0.64,texture(uNoise,p*0.04+0.31).r);\n" +
+            "  float base=texture(uNoise,p*0.075).r;\n" +
+            "  float cov=smoothstep(0.39,0.68,texture(uNoise,p*0.027+0.31).r);\n" +
             "  float d=rm(base,1.0-cov,1.0)*cov;\n" +
-            "  d=rm(d,0.22,1.0);\n" +                                // approximate the erosion's average bite
-            "  return pow(d,2.8)*0.9;\n" +
+            "  d=rm(d,0.18,1.0);\n" +                                // approximate the erosion's average bite
+            "  return pow(d,2.45)*0.9;\n" +
             "}\n" +
             // ── Phase 2: HG phase (silver lining) + powder + violet ambient + palette ─
             "float hg(float c,float g){ float g2=g*g; return (1.0-g2)/pow(max(1.0+g2-2.0*g*c,1e-3),1.5); }\n" +
@@ -709,24 +708,29 @@ public class NebulaDream extends DreamService {
             // (it is smaller on screen) — the step budget reaches far deeper.
             "    float g=1.0+t*0.10;\n" +
             "    vec3 p=ro+rd*t;\n" +
-            "    float d=(t<13.0)?dens(p):densFar(p);\n" +           // full detail near, cheap cache-friendly density far
-            // Per-sample dither (~1 LSB of the RG8 texture): breaks the 8-bit
-            // quantization iso-contours that read as an interference pattern.
-            "    d=max(d+(fract(sin(dot(p.xy+vec2(p.z),vec2(12.9898,78.233)))*43758.55)-0.5)*0.010,0.0);\n" +
+            "    float nearAmt;\n" +
+            "    float d;\n" +
+            "    if(t<10.0){ nearAmt=1.0; d=dens(p); }\n" +
+            "    else if(t<18.0){ nearAmt=1.0-smoothstep(10.0,18.0,t); d=mix(densFar(p),dens(p),nearAmt); }\n" +
+            "    else { nearAmt=0.0; d=densFar(p); }\n" +           // fade detail in gradually; no mid-distance pop
+            // Per-sample dither breaks far-field 8-bit texture banding, but fade
+            // it down in the foreground where it reads as quantized speckle.
+            "    float dith=mix(0.010,0.0025,nearAmt);\n" +
+            "    d=max(d+(fract(sin(dot(p.xy+vec2(p.z),vec2(12.9898,78.233)))*43758.55)-0.5)*dith,0.0);\n" +
             "    if(d>0.01){\n" +
             "      float dt=0.11*g;\n" +
-            "      vec3 emit=tcol*d*0.55+ambCol*d*0.25;\n" +        // glow from within, region-coloured
-            // Relief + rims on the NEAR layers only; mid/rear stays pure soft glow
-            // (far rims were stacking into a bright wall).
-            "      if(t<13.0){\n" +
+            "      vec3 emit=tcol*d*0.34+ambCol*d*0.18;\n" +        // dimmer interiors; rims carry more of the shape
+            // Relief + rims fade into the NEAR layers; mid/rear stays pure soft
+            // glow, avoiding a hard distance where dark blobs become bright rims.
+            "      if(nearAmt>0.001){\n" +
             "        float ds=densFar(p);\n" +
             "        float dlit=densFar(p+ldir*0.34);\n" +
             "        float lit=clamp((ds-dlit)*9.0,0.0,1.0);\n" +
-            "        emit*=0.50+1.8*lit;\n" +
+            "        emit*=mix(1.0,0.38+2.15*lit,nearAmt);\n" +
             // EDGE: ionization-front rim — fires when the ray crosses a boundary
             // (density jumping from ~nothing to substantial between samples).
-            "        float rim=clamp((d-dPrev)*9.0,0.0,1.0)*clamp(1.0-dPrev*8.0,0.0,1.0);\n" +
-            "        emit+=tcol*rim*0.8;\n" +
+            "        float rim=smoothstep(0.015,0.16,d-dPrev)*clamp(1.0-dPrev*6.0,0.0,1.0);\n" +
+            "        emit+=mix(tcol,vec3(1.0,0.62,0.92),0.35)*rim*1.15*nearAmt;\n" +
             "      }\n" +
             // Distance falloff: deep gas contributes progressively less, so the
             // mid/rear stack reads as faint depth, not an accumulated bright wall.
