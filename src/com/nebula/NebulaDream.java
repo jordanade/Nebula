@@ -315,7 +315,7 @@ public class NebulaDream extends DreamService {
             // Noise-driven (aperiodic) timing so flares appear at irregular,
             // non-repeating moments rather than on a fixed cycle.
             "    float sid=h1(cell+1.9);\n" +
-            "    float ft=uTime*(0.012+0.025*h1(cell+5.3))+sid*40.0;\n" +
+            "    float ft=uTime*(0.0156+0.0325*h1(cell+5.3))+sid*40.0;\n" +
             "    float flare=canFlare*smoothstep(0.88,1.0,vn(vec2(ft,sid*23.0)));\n" +
             "    float bri=mag+flare*flare*3.5;\n" +
             // Soften (widen) stars by how fast they stream (distance from centre)
@@ -764,7 +764,7 @@ public class NebulaDream extends DreamService {
 
         // ── v4 PASS 2: full-resolution composite. Samples the low-res gas
         // FBO (bilinear — soft, as gas should be), draws the starfield, galaxy
-        // haze and giant flare at NATIVE resolution (pin-sharp points/spikes),
+        // haze and accent flares at NATIVE resolution (pin-sharp points/spikes),
         // composites them behind the gas via its transmittance, then applies
         // the v3.1 output chain (hue drift, fade, desat, tonemap, HDR). ──────
         private static final String FRAG_COMP =
@@ -814,9 +814,9 @@ public class NebulaDream extends DreamService {
             "    float canFlare=step(0.95,h1(cell+3.3));\n" +
             "    float sid=h1(cell+1.9);\n" +
             // Per-cell flares stay modest (v3.1 behaviour) — a cell-hashed star's
-            // spikes cannot extend past its own grid cell, so the BIG dramatic
-            // crosshatch flares are a separate screen-space overlay (uGFlare).
-            "    float ft=uTime*(0.012+0.025*h1(cell+5.3))+sid*40.0;\n" +
+            // spikes cannot extend past its own grid cell, so the occasional
+            // accent flares are a separate screen-space overlay (uGFlare).
+            "    float ft=uTime*(0.0156+0.0325*h1(cell+5.3))+sid*40.0;\n" +
             "    float flare=canFlare*smoothstep(0.88,1.0,vn(vec2(ft,sid*23.0)));\n" +
             "    float bri=mag+flare*flare*3.5;\n" +
             "    float rad=length(uv-0.5);\n" +
@@ -858,20 +858,19 @@ public class NebulaDream extends DreamService {
             "  bg+=starLayer(s2,80.0,0.37,0.21)*f2*0.85;\n" +
             "  bg+=starLayer(s3,80.0,0.71,0.53)*f3*0.70;\n" +
             // (deep-space floor moved to the gas pass with the haze)
-            // ── GIANT FLARE overlay: rare, slow, screen-scale 8-point crosshatch.
+            // ── Accent flare overlay: rare, small 4-point star flare.
             // CPU-scheduled (position/timing/hue via uGFlare); drawn into the
-            // background so the nebula gas occludes it naturally. Intensity far
-            // above the HDR knee → the panel's peak brightness at the core.
+            // background so the nebula gas occludes it naturally. Pixel-space
+            // shaping keeps the bright flares near star scale instead of making
+            // a separate screen-sized effect.
             "  if(uGFlare.z>0.001){\n" +
-            "    vec2 fd=vUv-uGFlare.xy; fd.x*=uRes.x/uRes.y;\n" +
-            "    float fc=exp(-dot(fd,fd)*3200.0)*2.5;\n" +
-            "    float aH=exp(-fd.y*fd.y*22000.0)*exp(-fd.x*fd.x*55.0);\n" +
-            "    float aV=exp(-fd.x*fd.x*22000.0)*exp(-fd.y*fd.y*55.0);\n" +
-            "    vec2 dgg=vec2(fd.x+fd.y,fd.x-fd.y)*0.7071;\n" +
-            "    float aD=exp(-dgg.y*dgg.y*26000.0)*exp(-dgg.x*dgg.x*95.0)\n" +
-            "             +exp(-dgg.x*dgg.x*26000.0)*exp(-dgg.y*dgg.y*95.0);\n" +
+            "    vec2 fp=(vUv-uGFlare.xy)*uRes;\n" +
+            "    float core=exp(-dot(fp,fp)*0.20)*1.35;\n" +
+            "    float glow=exp(-dot(fp,fp)*0.018)*0.22;\n" +
+            "    float aH=exp(-fp.y*fp.y*1.8)*exp(-fp.x*fp.x*0.010);\n" +
+            "    float aV=exp(-fp.x*fp.x*1.8)*exp(-fp.y*fp.y*0.010);\n" +
             "    vec3 gc=mix(vec3(1.0),starCol(uGFlare.w),0.45);\n" +
-            "    bg+=gc*(fc+(aH+aV)*1.0+aD*0.5)*uGFlare.z*4.5;\n" +
+            "    bg+=gc*(core+glow+(aH+aV)*0.38)*uGFlare.z*1.35;\n" +
             "  }\n" +
             "  col+=T*bg;\n" +
 
@@ -903,9 +902,9 @@ public class NebulaDream extends DreamService {
         private int noiseTex;            // v4: 3D noise texture
         private int gasFbo, gasTex;      // v4: low-res gas render target
         private int gasW, gasH;
-        // v4: giant-flare overlay scheduling (rare, slow, screen-scale crosshatch)
+        // v4: accent-flare overlay scheduling (rare, small 4-point star flare)
         private final java.util.Random gfRng = new java.util.Random();
-        private float gfX, gfY, gfHue, gfStart = -1f, gfDur = 1f, gfNext = 25f;
+        private float gfX, gfY, gfHue, gfStart = -1f, gfDur = 1f, gfNext = 6f;
         private FloatBuffer quadBuf;
         private long startMs;
         private long lastDrawMs;
@@ -1057,11 +1056,11 @@ public class NebulaDream extends DreamService {
             GLES20.glUniform1f(cUHdrKnee,HDR_KNEE);
             GLES20.glUniform1f(cUHdrGain,HDR_GAIN);
             GLES20.glUniform1f(cUHdrMax,HDR_MAX);
-            // Giant flare scheduling: one at a time, every ~30-70 s, swelling and
-            // fading over 8-14 s (sin^2 envelope — the brighter, the slower).
+            // Accent flare scheduling: one at a time, every ~30-70 s, swelling and
+            // fading over 4-7 s (sin^2 envelope).
             if (t >= gfNext) {
                 gfStart = t;
-                gfDur   = 8f + gfRng.nextFloat()*6f;
+                gfDur   = 3.08f + gfRng.nextFloat()*2.31f;
                 gfX     = 0.20f + 0.60f*gfRng.nextFloat();
                 gfY     = 0.20f + 0.60f*gfRng.nextFloat();
                 gfHue   = gfRng.nextFloat();
