@@ -36,22 +36,14 @@ public class NebulaDream extends DreamService {
         HdrSurface hdr = new HdrSurface(prefs.hdrMode());
         sv.setEGLConfigChooser(hdr);
         sv.setEGLWindowSurfaceFactory(hdr);
+        // v4 split-resolution: the WINDOW stays at native panel resolution so the
+        // composite pass draws pin-sharp stars/spikes; the render-scale pref now
+        // governs only the low-res gas FBO inside the renderer.
         sv.setRenderer(new NebulaRenderer(
-            prefs.zoomMul(), prefs.writheRate(), prefs.frameCapFps(), hdr));
+            prefs.zoomMul(), prefs.writheRate(), prefs.frameCapFps(), hdr,
+            prefs.renderScale()));
         sv.setRenderMode(GLSurfaceView.RENDERMODE_CONTINUOUSLY);
         setContentView(sv);
-
-        // The nebula is low-frequency, so we can render below panel resolution
-        // and let the display scaler upscale — a big fragment-cost win for a
-        // barely visible softening.
-        float renderScale = prefs.renderScale();
-        if (renderScale < 0.999f) {
-            DisplayMetrics dm = new DisplayMetrics();
-            getWindowManager().getDefaultDisplay().getRealMetrics(dm);
-            int rw = Math.max(1, Math.round(dm.widthPixels * renderScale));
-            int rh = Math.max(1, Math.round(dm.heightPixels * renderScale));
-            sv.getHolder().setFixedSize(rw, rh);
-        }
     }
 
     /**
@@ -621,45 +613,31 @@ public class NebulaDream extends DreamService {
         // skipping, early-out, and a 5-tap light march. Throwaway — its only job is
         // to measure Tegra X1 raymarch throughput (go/no-go for the v4 build).
         // Analytic noise is a CONSERVATIVE bound; 3D-texture sampling would be cheaper.
-        private static final String FRAG_SPIKE =
+        // ── v4 PASS 1: the raymarched gas, rendered into a low-res FBO.
+        // Outputs rgb = gas emission (pre-tonemap linear), a = transmittance T,
+        // so the full-res composite pass can place stars BEHIND the gas. ────────
+        private static final String FRAG_GAS =
             "#version 300 es\n" +
             "precision highp float;\n" +
             "precision highp sampler3D;\n" +
             "uniform float uTime;\n" +
-            "uniform vec2  uRes;\n" +
-            "uniform float uZoom;\n" +
-            "uniform float uHdr;\n" +     // 1 = HDR scRGB-linear output, 0 = SDR
-            "uniform float uHdrKnee;\n" +
-            "uniform float uHdrGain;\n" +
-            "uniform float uHdrMax;\n" +
+            "uniform vec2  uRes;\n" +       // gas FBO resolution (same aspect as the panel)
+            "uniform float uZoom;\n" +      // star zoom speed (haze rides the star grid)
             "uniform sampler3D uNoise;\n" + // R = value fbm, G = inverted Worley (billow)
-            "uniform vec4 uGFlare;\n" +     // giant flare overlay: xy=pos, z=envelope, w=hue
             "in vec2 vUv;\n" +
             "out vec4 fragColor;\n" +
-            // ── Stars + pointillistic galaxy haze, ported faithfully from v3.1 ──
+            // ── Galaxy haze (v3.1 pointillistic): SOFT, so it lives in this low-res
+            // pass; it rides the same zooming grid as the comp pass's stars so the
+            // two read as one entity. ─────────────────────────────────────────────
             "float h1(vec2 i){ vec2 p=fract(i*vec2(0.1031,0.1030)); p+=dot(p,p+19.19); return fract(p.x*p.y); }\n" +
-            "vec2 h2(vec2 i){ vec2 p=fract(i*vec2(0.1031,0.1030)); p+=dot(p,p.yx+19.19); return fract((p.xx+p.yx)*p.xy); }\n" +
             "float vn(vec2 p){\n" +
             "  vec2 i=floor(p),f=fract(p);\n" +
             "  vec2 u=f*f*f*(f*(f*6.0-15.0)+10.0);\n" +
             "  return mix(mix(h1(i),h1(i+vec2(1,0)),u.x),\n" +
             "             mix(h1(i+vec2(0,1)),h1(i+vec2(1,1)),u.x),u.y);\n" +
             "}\n" +
-            "vec3 starCol(float h){\n" +
-            "  if(h<0.2) return vec3(0.55,0.78,1.00);\n" +
-            "  if(h<0.4) return vec3(0.45,1.00,1.00);\n" +
-            "  if(h<0.6) return vec3(1.00,1.00,1.00);\n" +
-            "  if(h<0.8) return vec3(1.00,0.62,0.88);\n" +
-            "  return      vec3(0.55,1.00,0.82);\n" +
-            "}\n" +
-            "vec3 starLayer(vec2 uv,float den,float ox,float oy){\n" +
+            "vec3 hazeLayer(vec2 uv,float den,float ox,float oy){\n" +
             "  vec2 gp=uv*den+vec2(ox,oy);\n" +
-            "  vec2 cell=floor(gp),f=fract(gp);\n" +
-            "  float dn=vn(cell*0.02+vec2(ox*0.1,oy*0.1))*0.65+vn(cell*0.06+11.0)*0.35;\n" +
-            "  float dens=smoothstep(0.44,0.64,dn);\n" +
-            "  float thresh=0.972-dens*0.53;\n" +
-            // Galaxy haze with v3.1's pointillistic stipple: soft body + internal
-            // detail + high-freq grain curdled into sparse sharp specks.
             "  float gdn=vn(gp*0.02+vec2(ox*0.1,oy*0.1))*0.55+vn(gp*0.055+11.0)*0.30+vn(gp*0.13+5.0)*0.15;\n" +
             "  float galaxy=smoothstep(0.50,0.82,gdn); galaxy*=galaxy;\n" +
             "  float gdet=0.5+0.5*vn(gp*0.20+vec2(3.0,7.0));\n" +
@@ -668,30 +646,7 @@ public class NebulaDream extends DreamService {
             "  grain=smoothstep(0.46,0.78,grain); grain*=grain;\n" +
             "  galaxy*=0.30+0.55*gdet+0.85*grain;\n" +
             "  vec3 gcol=mix(vec3(0.52,0.42,0.50),vec3(0.82,0.62,0.52),smoothstep(0.62,0.96,gdn));\n" +
-            "  vec3 res=gcol*galaxy*0.11;\n" +
-            "  float h=h1(cell);\n" +
-            "  if(h>thresh){\n" +
-            "    vec2 df=f-h2(cell+3.7);\n" +
-            "    float d=length(df);\n" +
-            "    float mag=0.18+0.82*pow(h1(cell+7.7),3.0);\n" +
-            "    float canFlare=step(0.95,h1(cell+3.3));\n" +
-            "    float sid=h1(cell+1.9);\n" +
-            // Per-cell flares stay modest (v3.1 behaviour) — a cell-hashed star's
-            // spikes cannot extend past its own grid cell, so the BIG dramatic
-            // crosshatch flares are a separate screen-space overlay (uGFlare).
-            "    float ft=uTime*(0.012+0.025*h1(cell+5.3))+sid*40.0;\n" +
-            "    float flare=canFlare*smoothstep(0.88,1.0,vn(vec2(ft,sid*23.0)));\n" +
-            "    float bri=mag+flare*flare*3.5;\n" +
-            "    float rad=length(uv-0.5);\n" +
-            "    float soft=1.0+rad*rad*16.0;\n" +
-            "    float core=exp(-d*d*2500.0/soft)*bri;\n" +
-            "    float halo=exp(-d*d*100.0)*mag*0.15;\n" +
-            "    float spH=exp(-df.y*df.y*5000.0)*exp(-df.x*df.x*32.0);\n" +
-            "    float spV=exp(-df.x*df.x*5000.0)*exp(-df.y*df.y*32.0);\n" +
-            "    float spike=(spH+spV)*bri*bri*0.34;\n" +
-            "    res+=starCol(h1(cell+9.1))*(core+halo+spike);\n" +
-            "  }\n" +
-            "  return res;\n" +
+            "  return gcol*galaxy*0.11;\n" +
             "}\n" +
             "float rm(float v,float l,float h){ return clamp((v-l)/(h-l),0.0,1.0); }\n" +
             // ── Phase 3: density from the precomputed 3D noise TEXTURE (uniform, no
@@ -785,6 +740,100 @@ public class NebulaDream extends DreamService {
             "  }\n" +
             "  col*=0.95;\n" + // gain for the tonemap (slightly dimmer overall)
 
+            // Galaxy haze + deep-space floor BEHIND the gas (same three-phase star
+            // zoom as the comp pass, so haze and stars move as one entity).
+            "  vec3 hz=vec3(0.0);\n" +
+            "  float ph=uTime*0.0090*uZoom;\n" +
+            "  float t1=fract(ph+0.000);\n" +
+            "  float t2=fract(ph+0.333);\n" +
+            "  float t3=fract(ph+0.667);\n" +
+            "  float f1=smoothstep(0.00,0.40,t1)*(1.0-smoothstep(0.60,1.00,t1));\n" +
+            "  float f2=smoothstep(0.00,0.40,t2)*(1.0-smoothstep(0.60,1.00,t2));\n" +
+            "  float f3=smoothstep(0.00,0.40,t3)*(1.0-smoothstep(0.60,1.00,t3));\n" +
+            "  vec2 sc=vUv-0.5;\n" +
+            "  vec2 sr1=vec2(sc.x*0.951-sc.y*0.309, sc.x*0.309+sc.y*0.951);\n" +
+            "  vec2 sr2=vec2(sc.x*0.423-sc.y*0.906, sc.x*0.906+sc.y*0.423);\n" +
+            "  vec2 sr3=vec2(-sc.x*0.602-sc.y*0.799, sc.x*0.799-sc.y*0.602);\n" +
+            "  hz+=hazeLayer(sr1/exp(t1*0.75)+0.5,80.0,0.00,0.00)*f1;\n" +
+            "  hz+=hazeLayer(sr2/exp(t2*0.75)+0.5,80.0,0.37,0.21)*f2*0.85;\n" +
+            "  hz+=hazeLayer(sr3/exp(t3*0.75)+0.5,80.0,0.71,0.53)*f3*0.70;\n" +
+            "  hz+=vec3(0.012,0.012,0.040);\n" +
+            "  col+=T*hz;\n" +
+            "  fragColor=vec4(col,T);\n" +
+            "}\n";
+
+        // ── v4 PASS 2: full-resolution composite. Samples the low-res gas
+        // FBO (bilinear — soft, as gas should be), draws the starfield, galaxy
+        // haze and giant flare at NATIVE resolution (pin-sharp points/spikes),
+        // composites them behind the gas via its transmittance, then applies
+        // the v3.1 output chain (hue drift, fade, desat, tonemap, HDR). ──────
+        private static final String FRAG_COMP =
+            "#version 300 es\n" +
+            "precision highp float;\n" +
+            "uniform float uTime;\n" +
+            "uniform vec2  uRes;\n" +
+            "uniform float uZoom;\n" +
+            "uniform float uHdr;\n" +
+            "uniform float uHdrKnee;\n" +
+            "uniform float uHdrGain;\n" +
+            "uniform float uHdrMax;\n" +
+            "uniform vec4 uGFlare;\n" +
+            "uniform sampler2D uGas;\n" +
+            "in vec2 vUv;\n" +
+            "out vec4 fragColor;\n" +
+            // ── Stars + pointillistic galaxy haze, ported faithfully from v3.1 ──
+            "float h1(vec2 i){ vec2 p=fract(i*vec2(0.1031,0.1030)); p+=dot(p,p+19.19); return fract(p.x*p.y); }\n" +
+            "vec2 h2(vec2 i){ vec2 p=fract(i*vec2(0.1031,0.1030)); p+=dot(p,p.yx+19.19); return fract((p.xx+p.yx)*p.xy); }\n" +
+            "float vn(vec2 p){\n" +
+            "  vec2 i=floor(p),f=fract(p);\n" +
+            "  vec2 u=f*f*f*(f*(f*6.0-15.0)+10.0);\n" +
+            "  return mix(mix(h1(i),h1(i+vec2(1,0)),u.x),\n" +
+            "             mix(h1(i+vec2(0,1)),h1(i+vec2(1,1)),u.x),u.y);\n" +
+            "}\n" +
+            "vec3 starCol(float h){\n" +
+            "  if(h<0.2) return vec3(0.55,0.78,1.00);\n" +
+            "  if(h<0.4) return vec3(0.45,1.00,1.00);\n" +
+            "  if(h<0.6) return vec3(1.00,1.00,1.00);\n" +
+            "  if(h<0.8) return vec3(1.00,0.62,0.88);\n" +
+            "  return      vec3(0.55,1.00,0.82);\n" +
+            "}\n" +
+            "vec3 starLayer(vec2 uv,float den,float ox,float oy){\n" +
+            "  vec2 gp=uv*den+vec2(ox,oy);\n" +
+            "  vec2 cell=floor(gp),f=fract(gp);\n" +
+            "  float dn=vn(cell*0.02+vec2(ox*0.1,oy*0.1))*0.65+vn(cell*0.06+11.0)*0.35;\n" +
+            "  float dens=smoothstep(0.44,0.64,dn);\n" +
+            "  float thresh=0.972-dens*0.53;\n" +
+            // (Galaxy haze moved to the low-res GAS pass — it is soft, so it
+            //  doesn't need native res; only the star points/spikes do.)
+            "  vec3 res=vec3(0.0);\n" +
+            "  float h=h1(cell);\n" +
+            "  if(h>thresh){\n" +
+            "    vec2 df=f-h2(cell+3.7);\n" +
+            "    float d=length(df);\n" +
+            "    float mag=0.18+0.82*pow(h1(cell+7.7),3.0);\n" +
+            "    float canFlare=step(0.95,h1(cell+3.3));\n" +
+            "    float sid=h1(cell+1.9);\n" +
+            // Per-cell flares stay modest (v3.1 behaviour) — a cell-hashed star's
+            // spikes cannot extend past its own grid cell, so the BIG dramatic
+            // crosshatch flares are a separate screen-space overlay (uGFlare).
+            "    float ft=uTime*(0.012+0.025*h1(cell+5.3))+sid*40.0;\n" +
+            "    float flare=canFlare*smoothstep(0.88,1.0,vn(vec2(ft,sid*23.0)));\n" +
+            "    float bri=mag+flare*flare*3.5;\n" +
+            "    float rad=length(uv-0.5);\n" +
+            "    float soft=1.0+rad*rad*16.0;\n" +
+            "    float core=exp(-d*d*2500.0/soft)*bri;\n" +
+            "    float halo=exp(-d*d*100.0)*mag*0.15;\n" +
+            "    float spH=exp(-df.y*df.y*5000.0)*exp(-df.x*df.x*32.0);\n" +
+            "    float spV=exp(-df.x*df.x*5000.0)*exp(-df.y*df.y*32.0);\n" +
+            "    float spike=(spH+spV)*bri*bri*0.34;\n" +
+            "    res+=starCol(h1(cell+9.1))*(core+halo+spike);\n" +
+            "  }\n" +
+            "  return res;\n" +
+            "}\n" +
+            "void main(){\n" +
+            "  vec4 gas=texture(uGas,vUv);\n" +
+            "  vec3 col=gas.rgb;\n" +
+            "  float T=gas.a;\n" +
             // ── Stars + galaxy haze BEHIND the clouds (v3.1 three-phase zooming
             // star system), weighted by the ray's remaining transmittance T so
             // dense masses occlude them and they shine through voids/thin gas. ──
@@ -808,7 +857,7 @@ public class NebulaDream extends DreamService {
             "  bg+=starLayer(s1,80.0,0.00,0.00)*f1;\n" +
             "  bg+=starLayer(s2,80.0,0.37,0.21)*f2*0.85;\n" +
             "  bg+=starLayer(s3,80.0,0.71,0.53)*f3*0.70;\n" +
-            "  bg+=vec3(0.012,0.012,0.040);\n" +                     // faint deep-space floor
+            // (deep-space floor moved to the gas pass with the haze)
             // ── GIANT FLARE overlay: rare, slow, screen-scale 8-point crosshatch.
             // CPU-scheduled (position/timing/hue via uGFlare); drawn into the
             // background so the nebula gas occludes it naturally. Intensity far
@@ -847,10 +896,14 @@ public class NebulaDream extends DreamService {
             "  }\n" +
             "}\n";
 
-        private int prog, aPos, uTime, uRes, uZoom, uWrithe, uHdr, uHdrKnee, uHdrGain, uHdrMax;
-        private int uNoise, noiseTex; // v4: 3D noise texture
+        // Pass 1 (gas, low-res FBO): program + locations
+        private int progGas, gAPos, gUTime, gURes, gUNoise, gUZoom;
+        // Pass 2 (composite, native res): program + locations
+        private int progComp, cAPos, cUTime, cURes, cUZoom, cUHdr, cUHdrKnee, cUHdrGain, cUHdrMax, cUGFlare, cUGas;
+        private int noiseTex;            // v4: 3D noise texture
+        private int gasFbo, gasTex;      // v4: low-res gas render target
+        private int gasW, gasH;
         // v4: giant-flare overlay scheduling (rare, slow, screen-scale crosshatch)
-        private int uGFlare;
         private final java.util.Random gfRng = new java.util.Random();
         private float gfX, gfY, gfHue, gfStart = -1f, gfDur = 1f, gfNext = 25f;
         private FloatBuffer quadBuf;
@@ -861,6 +914,7 @@ public class NebulaDream extends DreamService {
 
         private final float zoomMul;     // zoom-speed multiplier (1.0 = default)
         private final float writheRate;  // slowT rate
+        private final float gasScale;    // gas FBO scale relative to the native window
         // Minimum ms between frames; 0 = uncapped. A frame cap roughly halves
         // GPU load since the motion is slow enough that ~30fps is invisible.
         private final long frameMs;
@@ -874,32 +928,43 @@ public class NebulaDream extends DreamService {
         private static final float HDR_GAIN = 30.0f;
         private static final float HDR_MAX  = 30.0f; // high ceiling: cores drive to the panel peak
 
-        NebulaRenderer(float zoomMul, float writheRate, int frameCapFps, HdrSurface hdr) {
+        NebulaRenderer(float zoomMul, float writheRate, int frameCapFps, HdrSurface hdr, float gasScale) {
             this.zoomMul = zoomMul;
             this.writheRate = writheRate;
             this.frameMs = (frameCapFps > 0) ? Math.round(1000.0 / frameCapFps) : 0L;
             this.hdr = hdr;
+            this.gasScale = gasScale;
         }
 
         @Override
         public void onSurfaceCreated(GL10 gl, EGLConfig cfg) {
             GLES20.glClearColor(0f,0f,0f,1f);
-            // On context recreation (e.g. resume), drop the stale program first.
-            if (prog!=0) { GLES20.glDeleteProgram(prog); prog=0; }
+            // On context recreation (e.g. resume), drop stale GL objects first.
+            if (progGas!=0)  { GLES20.glDeleteProgram(progGas);  progGas=0; }
+            if (progComp!=0) { GLES20.glDeleteProgram(progComp); progComp=0; }
+            gasFbo=0; gasTex=0; // ids are stale on a new context; recreated in onSurfaceChanged
             lastDrawMs=0;
-            prog  = buildProg(VERT_ES3, FRAG_SPIKE); // v4 raymarcher (ES3)
-            aPos  = GLES20.glGetAttribLocation(prog,"aPos");
-            uTime = GLES20.glGetUniformLocation(prog,"uTime");
-            uNoise = GLES20.glGetUniformLocation(prog,"uNoise");
-            uGFlare = GLES20.glGetUniformLocation(prog,"uGFlare");
+
+            progGas = buildProg(VERT_ES3, FRAG_GAS);
+            gAPos   = GLES20.glGetAttribLocation(progGas,"aPos");
+            gUTime  = GLES20.glGetUniformLocation(progGas,"uTime");
+            gURes   = GLES20.glGetUniformLocation(progGas,"uRes");
+            gUNoise = GLES20.glGetUniformLocation(progGas,"uNoise");
+            gUZoom  = GLES20.glGetUniformLocation(progGas,"uZoom");
+
+            progComp = buildProg(VERT_ES3, FRAG_COMP);
+            cAPos    = GLES20.glGetAttribLocation(progComp,"aPos");
+            cUTime   = GLES20.glGetUniformLocation(progComp,"uTime");
+            cURes    = GLES20.glGetUniformLocation(progComp,"uRes");
+            cUZoom   = GLES20.glGetUniformLocation(progComp,"uZoom");
+            cUHdr    = GLES20.glGetUniformLocation(progComp,"uHdr");
+            cUHdrKnee= GLES20.glGetUniformLocation(progComp,"uHdrKnee");
+            cUHdrGain= GLES20.glGetUniformLocation(progComp,"uHdrGain");
+            cUHdrMax = GLES20.glGetUniformLocation(progComp,"uHdrMax");
+            cUGFlare = GLES20.glGetUniformLocation(progComp,"uGFlare");
+            cUGas    = GLES20.glGetUniformLocation(progComp,"uGas");
+
             noiseTex = buildNoiseTexture(64); // re-upload each context (ids go stale); CPU gen is cached
-            uRes  = GLES20.glGetUniformLocation(prog,"uRes");
-            uZoom = GLES20.glGetUniformLocation(prog,"uZoom");
-            uWrithe = GLES20.glGetUniformLocation(prog,"uWrithe");
-            uHdr = GLES20.glGetUniformLocation(prog,"uHdr");
-            uHdrKnee = GLES20.glGetUniformLocation(prog,"uHdrKnee");
-            uHdrGain = GLES20.glGetUniformLocation(prog,"uHdrGain");
-            uHdrMax = GLES20.glGetUniformLocation(prog,"uHdrMax");
             ByteBuffer bb=ByteBuffer.allocateDirect(QUAD.length*4);
             bb.order(ByteOrder.nativeOrder());
             quadBuf=bb.asFloatBuffer();
@@ -911,6 +976,37 @@ public class NebulaDream extends DreamService {
         public void onSurfaceChanged(GL10 gl, int w, int h) {
             screenW=w; screenH=h;
             GLES20.glViewport(0,0,w,h);
+
+            // (Re)create the low-res gas FBO. RGBA16F (needs EXT_color_buffer_float,
+            // present on the Tegra X1); falls back to RGBA8 if incomplete — gas
+            // highlights then clamp at 1.0, acceptable degradation.
+            if (gasFbo!=0) { GLES20.glDeleteFramebuffers(1,new int[]{gasFbo},0); gasFbo=0; }
+            if (gasTex!=0) { GLES20.glDeleteTextures(1,new int[]{gasTex},0); gasTex=0; }
+            gasW=Math.max(1,Math.round(w*gasScale));
+            gasH=Math.max(1,Math.round(h*gasScale));
+            int[] id=new int[1];
+            GLES20.glGenTextures(1,id,0); gasTex=id[0];
+            GLES20.glBindTexture(GLES20.GL_TEXTURE_2D,gasTex);
+            GLES30.glTexImage2D(GLES20.GL_TEXTURE_2D,0,GLES30.GL_RGBA16F,gasW,gasH,0,
+                GLES20.GL_RGBA,GLES30.GL_HALF_FLOAT,null);
+            GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D,GLES20.GL_TEXTURE_MIN_FILTER,GLES20.GL_LINEAR);
+            GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D,GLES20.GL_TEXTURE_MAG_FILTER,GLES20.GL_LINEAR);
+            GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D,GLES20.GL_TEXTURE_WRAP_S,GLES20.GL_CLAMP_TO_EDGE);
+            GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D,GLES20.GL_TEXTURE_WRAP_T,GLES20.GL_CLAMP_TO_EDGE);
+            GLES20.glGenFramebuffers(1,id,0); gasFbo=id[0];
+            GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER,gasFbo);
+            GLES20.glFramebufferTexture2D(GLES20.GL_FRAMEBUFFER,GLES20.GL_COLOR_ATTACHMENT0,
+                GLES20.GL_TEXTURE_2D,gasTex,0);
+            if (GLES20.glCheckFramebufferStatus(GLES20.GL_FRAMEBUFFER)!=GLES20.GL_FRAMEBUFFER_COMPLETE) {
+                Log.w(TAG,"RGBA16F gas FBO incomplete; falling back to RGBA8.");
+                GLES20.glBindTexture(GLES20.GL_TEXTURE_2D,gasTex);
+                GLES20.glTexImage2D(GLES20.GL_TEXTURE_2D,0,GLES20.GL_RGBA,gasW,gasH,0,
+                    GLES20.GL_RGBA,GLES20.GL_UNSIGNED_BYTE,null);
+                if (GLES20.glCheckFramebufferStatus(GLES20.GL_FRAMEBUFFER)!=GLES20.GL_FRAMEBUFFER_COMPLETE)
+                    throw new RuntimeException("Gas FBO incomplete even with RGBA8.");
+            }
+            GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER,0);
+            Log.i(TAG,"Gas FBO "+gasW+"x"+gasH+" (window "+w+"x"+h+")");
         }
 
         @Override
@@ -934,16 +1030,33 @@ public class NebulaDream extends DreamService {
             long drawStartNs=System.nanoTime();
 
             float t=(SystemClock.elapsedRealtime()-startMs)/1000f;
-            GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT);
-            GLES20.glUseProgram(prog);
-            GLES20.glUniform1f(uTime,t);
-            GLES20.glUniform2f(uRes,(float)screenW,(float)screenH);
-            GLES20.glUniform1f(uZoom,zoomMul);
-            GLES20.glUniform1f(uWrithe,writheRate);
-            GLES20.glUniform1f(uHdr,(hdr!=null && hdr.hdrActive)?1f:0f);
-            GLES20.glUniform1f(uHdrKnee,HDR_KNEE);
-            GLES20.glUniform1f(uHdrGain,HDR_GAIN);
-            GLES20.glUniform1f(uHdrMax,HDR_MAX);
+
+            // ── PASS 1: raymarch the gas into the low-res FBO ────────────────
+            GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER,gasFbo);
+            GLES20.glViewport(0,0,gasW,gasH);
+            GLES20.glUseProgram(progGas);
+            GLES20.glUniform1f(gUTime,t);
+            GLES20.glUniform2f(gURes,(float)gasW,(float)gasH);
+            GLES20.glUniform1f(gUZoom,zoomMul);
+            GLES20.glActiveTexture(GLES20.GL_TEXTURE0);
+            GLES30.glBindTexture(GLES30.GL_TEXTURE_3D,noiseTex);
+            GLES20.glUniform1i(gUNoise,0);
+            quadBuf.position(0);
+            GLES20.glVertexAttribPointer(gAPos,2,GLES20.GL_FLOAT,false,8,quadBuf);
+            GLES20.glEnableVertexAttribArray(gAPos);
+            GLES20.glDrawArrays(GLES20.GL_TRIANGLES,0,6);
+
+            // ── PASS 2: composite at native res (sharp stars/haze/flare) ─────
+            GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER,0);
+            GLES20.glViewport(0,0,screenW,screenH);
+            GLES20.glUseProgram(progComp);
+            GLES20.glUniform1f(cUTime,t);
+            GLES20.glUniform2f(cURes,(float)screenW,(float)screenH);
+            GLES20.glUniform1f(cUZoom,zoomMul);
+            GLES20.glUniform1f(cUHdr,(hdr!=null && hdr.hdrActive)?1f:0f);
+            GLES20.glUniform1f(cUHdrKnee,HDR_KNEE);
+            GLES20.glUniform1f(cUHdrGain,HDR_GAIN);
+            GLES20.glUniform1f(cUHdrMax,HDR_MAX);
             // Giant flare scheduling: one at a time, every ~30-70 s, swelling and
             // fading over 8-14 s (sin^2 envelope — the brighter, the slower).
             if (t >= gfNext) {
@@ -960,14 +1073,15 @@ public class NebulaDream extends DreamService {
                 float s = (float)Math.sin(Math.PI * ph);
                 gfEnv = s*s;
             }
-            GLES20.glUniform4f(uGFlare, gfX, gfY, gfEnv, gfHue);
+            GLES20.glUniform4f(cUGFlare, gfX, gfY, gfEnv, gfHue);
             GLES20.glActiveTexture(GLES20.GL_TEXTURE0);
-            GLES30.glBindTexture(GLES30.GL_TEXTURE_3D,noiseTex);
-            GLES20.glUniform1i(uNoise,0);
+            GLES20.glBindTexture(GLES20.GL_TEXTURE_2D,gasTex);
+            GLES20.glUniform1i(cUGas,0);
             quadBuf.position(0);
-            GLES20.glVertexAttribPointer(aPos,2,GLES20.GL_FLOAT,false,8,quadBuf);
-            GLES20.glEnableVertexAttribArray(aPos);
+            GLES20.glVertexAttribPointer(cAPos,2,GLES20.GL_FLOAT,false,8,quadBuf);
+            GLES20.glEnableVertexAttribArray(cAPos);
             GLES20.glDrawArrays(GLES20.GL_TRIANGLES,0,6);
+
             GLES20.glFinish(); // PHASE 0: force GPU completion to time real work
             workAccNs += System.nanoTime()-drawStartNs;
         }
