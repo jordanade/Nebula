@@ -2,6 +2,48 @@
 
 All notable changes to Nebula are documented here.
 
+## 4.0 — 2026-06-13
+
+A ground-up rebuild of the gas rendering: the flat 2D FBM nebula is replaced by
+a real-time volumetric raymarch through a 3D noise field, rendered in a
+split-resolution pipeline that keeps stars pin-sharp at native panel resolution
+while the gas runs at a lower resolution for performance.
+
+### Added
+- **Volumetric raymarching** — 46-step ray march through a tiling 3D noise
+  texture (coverage × billow base, Worley erosion) replaces the v3 screen-space
+  FBM. The gas now has true depth: foreground masses occlude background stars,
+  and the camera flies *through* the clouds.
+- **Three-stage density LOD** — near gas gets full 4-fetch erosion detail;
+  mid-range drops the fine erosion; far-field uses only 2 low-frequency fetches.
+  Together they triple the effective march depth while keeping frame time flat.
+- **Ionization-front rims** — bright edges fire at every gas boundary where the
+  ray crosses from empty space into dense cloud, giving the nebula bright
+  structural outlines for free.
+- **Gradient relief lighting** — density-gradient normals on near layers give
+  the gas sculpted, directional lit/shadow form.
+- **Split-resolution pipeline** — the gas is raymarched into a low-res FBO
+  (governed by the render-scale setting); the composite pass draws stars,
+  diffraction spikes, and galaxy haze at full native resolution and composites
+  them behind the gas via its transmittance channel.
+- **Tiling 3D noise texture** — a 64³ RGBA texture (R = 3-octave value FBM,
+  G = inverted Worley) is generated once on the CPU and sampled in the shader,
+  replacing all analytic noise with texture fetches for a ~6× speedup.
+- **GLES 3.0** — required for `sampler3D` and `glTexImage3D`; the GLES 2.0
+  shader path is removed.
+
+### Changed
+- Gas is now **emissive** (emission nebula) rather than lit cloud — no light
+  march or phase function; the gas glows, tinted by the v3.1 purple palette.
+- **Ultra-transparent extinction** so stars shine through everything and the
+  deep march never hits early-out, giving a consistent frame time.
+- Far-field banding from 8-bit texture quantisation is broken with a
+  **spatial dither** that fades out for near gas (where dense sampling already
+  hides it).
+- Removed the CPU-scheduled giant-flare overlay (replaced by the per-star
+  flares in the composite pass).
+- Steady **20 fps** on NVIDIA Shield 2017 at the default render scale.
+
 ## 3.1 — 2026-06-08
 
 An art-direction pass: a purpler palette, more dramatic massing, and a fix for

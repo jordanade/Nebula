@@ -1,10 +1,10 @@
 # Nebula
 
-A GPU-accelerated nebula fly-through screensaver for Android TV. Vibe coded with Claude Sonnet 4.6 and Opus 4.8.
+A GPU-accelerated nebula fly-through screensaver for Android TV. Vibe coded with Claude Sonnet 4.6, Opus 4.6, and Opus 4.8.
 
 ## What it looks like
 
-A deep-space nebula fly-through rendered entirely in GLSL on the GPU. Voluminous, self-shadowed clouds of gas — sculpted with embossed relief and a palette centred on deep violet and indigo, with magenta and cool-blue accents — billow past against a glittering star field as you continuously zoom inward, new detail perpetually emerging from the center. Dramatic bright ridges give way to deep black voids; dense clusters of stars glow as hazy distant galaxies, and the brightest cores throw occasional HDR flares with cross-hatched diffraction spikes. Runs smoothly in HDR on a NVIDIA Shield.
+A deep-space nebula rendered in real-time volumetric raymarching on the GPU. The camera flies through translucent clouds of emissive gas — sculpted by a tiling 3D noise field with Worley erosion and lit by gradient relief and ionization-front rims — in a palette centred on deep violet and indigo, with magenta and cool-blue accents. Foreground masses occlude background stars with true depth; bright structural rims trace every gas boundary; dense star clusters glow as pointillistic distant galaxies, and the brightest stars throw aperiodic HDR flares with cross-hatched diffraction spikes. A split-resolution pipeline keeps stars pin-sharp at native panel resolution while the gas runs at a tunable lower resolution. Runs at a steady 20 fps in HDR on a NVIDIA Shield.
 
 Designed for OLED and HDR displays — deep black voids between dramatic nebula ridges, with the brightest cores driven into real panel headroom. All elements are in continuous motion.
 
@@ -12,20 +12,21 @@ https://github.com/user-attachments/assets/107125af-f979-4bf2-ac30-a529a8a7896a
 
 ## Technical approach
 
-- **Single full-screen quad** — all rendering happens in one fragment shader, zero CPU geometry work per frame
-- **Voluminous cloud body** — soft, filled gas masses from smooth FBM (not turbulence, whose `abs()` creases read as hollow bubbles); zero-contour filaments (`exp(-|sfbm(p)| * k)`) sit on top as minor bright accents rather than the main form
-- **Volumetric self-shadow** — a short march toward the light through the cloud density accumulates optical depth, so the lit side of each mass stays bright while the far side falls into shadow — a directional gradient across a filled body, the real 3D-cloud cue
-- **Embossed relief** — the density gradient drives surface normals for sculpted light/dark relief, read from a band-limited macro density so fine texture never aliases into shimmer
-- **Static domain warp** — a position-based (non-animated) noise warp bends straight filaments into curled, billowing lobes: shape without motion
-- **Large-scale form** — a low-frequency mask carves bright filament ridges against deep black voids for sculptural composition rather than uniform coverage; density is weighted toward the ridges over the smooth fill
-- **Spatial temperature** — a four-stop palette (orange → magenta-pink → violet → blue) centred on violet/indigo, with a gentle drifting "lit front" that illuminates one region like nearby stars while keeping the bright masses in the purple family
-- **Scanned framing** — the continuous zoom drifts on a bounded, quasi-periodic orbit centred on a dense, high-contrast region of the noise field, so the composition always holds real structure and never pans off into empty space
-- **Galaxy haze + HDR flares** — dense star clusters glow as hazy distant galaxies coincident with the star layer; the brightest cloud cores throw occasional, aperiodic HDR flashes with cross-hatched diffraction spikes
-- **Anti-aliased FBM** — mottle octaves fade out as they approach the pixel Nyquist rate (`fwidth`), so rich texture can be stacked without aliasing through the relief gradient
+- **Volumetric raymarching** — a 46-step ray march through a tiling 3D noise field renders true-depth gas clouds; the camera flies through the nebula, with foreground masses occluding background stars via a transmittance channel
+- **Tiling 3D noise texture** — a 64³ RGBA texture (R = 3-octave value FBM, G = inverted Worley) generated once on the CPU; replaces all analytic noise with texture fetches for a ~6× speedup
+- **Coverage × billow density** — a low-frequency coverage gate carves large cloud masses, eroded by two scales of Worley detail for organic cauliflower edges
+- **Three-stage density LOD** — near gas: full 4-fetch erosion; mid-range: coarse erosion only; far-field: 2 low-frequency fetches. Triples effective march depth while keeping frame time flat
+- **Emissive gas** — the nebula glows (emission nebula, not sunlit cloud), tinted by a four-stop palette (orange → magenta → violet → blue) driven by a drifting large-scale region field
+- **Gradient relief lighting** — density-gradient normals give near layers directional lit/shadow sculpting; mid and rear layers stay as pure soft glow
+- **Ionization-front rims** — bright edges fire at every gas boundary where the ray crosses from empty space into dense cloud, giving bright structural outlines for free
+- **Ultra-transparent extinction** — very low opacity so stars shine through all masses; the deep march never hits early-out, giving a consistent frame time
+- **Split-resolution pipeline** — gas is raymarched into a low-res FBO (render-scale setting); stars, diffraction spikes, and galaxy haze are drawn at native panel resolution in a full-res composite pass
+- **Spatial dither** — breaks far-field 8-bit texture banding; fades out for near gas where dense sampling already hides quantisation
+- **Galaxy haze + HDR flares** — dense star clusters glow as hazy distant galaxies coincident with the star layer; the brightest stars throw aperiodic HDR flashes with cross-hatched diffraction spikes
 - **Scale-space fractal zoom** — rotation applied after scaling ensures `pB(t=1) = pA(t=0)` exactly at every octave boundary; new detail continuously elaborates on visible structure with no position jumps, resets, or crossfade artifacts
 - **Three-phase star system** — staggered radial zoom layers with symmetric smoothstep fade-in/out; any single layer's reset is covered by the other two
 - **HDR output** — opt-in FP16 scRGB-linear surface with feature detection and automatic SDR fallback; highlight cores extend into panel headroom while mid-tones keep the tuned SDR look
-- **GLES 2.0** — compatible with any Android TV device; `highp` precision throughout prevents coordinate overflow artifacts at deep zoom levels
+- **GLES 3.0** — required for `sampler3D` / `glTexImage3D`; `highp` precision throughout prevents coordinate overflow artifacts at deep zoom levels
 - **Burn-in safe** — dual-axis coordinate rotation plus continuous inward zoom guarantees no pixel holds a static value; clouds, stars, and flares are all in perpetual motion
 
 ## Install
@@ -134,7 +135,7 @@ adb install --no-incremental Nebula.apk
 
 ## Compatibility
 
-- Android TV 5.0+ (API 21+), OpenGL ES 2.0
+- Android TV 5.0+ (API 21+), OpenGL ES 3.0
 - Tested on NVIDIA Shield 2017 (Tegra X1, Android 11)
 - HDR10 displays: colours are tuned for OLED — deep blacks with saturated violet highlights
 
