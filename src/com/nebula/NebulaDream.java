@@ -311,8 +311,8 @@ public class NebulaDream extends DreamService {
             "        float rim=smoothstep(0.015,0.16,d-dPrev)*clamp(1.0-dPrev*6.0,0.0,1.0);\n" +
             "        emit+=mix(tcol,vec3(1.0,0.62,0.92),0.35)*rim*1.15*nearAmt;\n" +
             "        float frontGrain=0.42+0.82*frontDetail;\n" +
-            "        emit+=mix(tcol,vec3(0.98,0.42,0.88),0.46)*frontHalo*d*frontGrain*0.78*nearAmt;\n" +
-            "        emit+=mix(tcol,vec3(1.0,0.62,0.98),0.56)*frontRim*d*frontGrain*2.20*nearAmt;\n" +
+            "        float shell=smoothstep(0.018,0.10,d)*(1.0-smoothstep(0.22,0.48,d));\n" +
+            "        emit+=mix(tcol,vec3(1.0,0.48,0.90),0.48)*frontHalo*(d*0.20+shell*0.68)*frontGrain*1.05*nearAmt;\n" +
             "      }\n" +
             // Distance falloff: deep gas contributes progressively less, so the
             // mid/rear stack reads as faint depth, not an accumulated bright wall.
@@ -323,7 +323,7 @@ public class NebulaDream extends DreamService {
             "      t+=dt;\n" +
             "    } else if(dustD>0.015){\n" +
             "      float dt=0.11*g;\n" +
-            "      col+=T*(vec3(0.003,0.003,0.010)*dustD+vec3(0.030,0.010,0.034)*frontRim*dustD*frontDetail)*dt;\n" +
+            "      col+=T*vec3(0.003,0.003,0.010)*dustD*dt;\n" +
             "      T*=exp(-dustOcc*0.50*dt);\n" +
             "      t+=dt;\n" +
             "    } else { t+=0.28*g; }\n" +
