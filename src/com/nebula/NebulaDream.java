@@ -373,6 +373,7 @@ public class NebulaDream extends DreamService {
             "uniform float uHdrKnee;\n" +
             "uniform float uHdrGain;\n" +
             "uniform float uHdrMax;\n" +
+            "uniform vec4 uStarFlare;\n" +
             "uniform sampler2D uGas;\n" +
             "in vec2 vUv;\n" +
             "out vec4 fragColor;\n" +
@@ -392,7 +393,7 @@ public class NebulaDream extends DreamService {
             "  if(h<0.8) return vec3(1.00,0.62,0.88);\n" +
             "  return      vec3(0.55,1.00,0.82);\n" +
             "}\n" +
-            "vec3 starLayer(vec2 uv,float den,float ox,float oy,float ca,float sa){\n" +
+            "vec3 starLayer(vec2 uv,float den,float ox,float oy,float ca,float sa,float lid){\n" +
             "  vec2 gp=uv*den+vec2(ox,oy);\n" +
             "  vec2 cell=floor(gp),f=fract(gp);\n" +
             "  float dn=vn(cell*0.02+vec2(ox*0.1,oy*0.1))*0.65+vn(cell*0.06+11.0)*0.35;\n" +
@@ -404,11 +405,10 @@ public class NebulaDream extends DreamService {
             "    vec2 df=f-h2(cell+3.7);\n" +
             "    float d=length(df);\n" +
             "    float mag=0.18+0.82*pow(h1(cell+7.7),3.0);\n" +
-            "    float fmag=pow(h1(cell+3.3),4.0);\n" +
-            "    float sid=h1(cell+1.9);\n" +
-            "    float ft=uTime*(0.010+0.055*h1(cell+5.3))+sid*61.0;\n" +
-            "    float flare=fmag*pow(smoothstep(0.93,1.0,vn(vec2(ft,sid*37.0))),2.0);\n" +
-            "    float fl2=flare*flare;\n" +
+            "    float sel=fract(sin(dot(cell,vec2(127.1,311.7))+uStarFlare.x*43.17)*43758.5);\n" +
+            "    float isFlare=step(abs(lid-uStarFlare.w),0.5)*step(0.9975,sel);\n" +
+            "    float fl=isFlare*uStarFlare.y*uStarFlare.z;\n" +
+            "    float fl2=fl*fl;\n" +
             "    float bri=mag+fl2*8.0;\n" +
             "    float rad=length(uv-0.5);\n" +
             "    float soft=1.0+rad*rad*16.0+fl2*18.0;\n" +
@@ -447,9 +447,9 @@ public class NebulaDream extends DreamService {
             "  vec2 s1=sr1/exp(t1*SZMAX)+0.5;\n" +
             "  vec2 s2=sr2/exp(t2*SZMAX)+0.5;\n" +
             "  vec2 s3=sr3/exp(t3*SZMAX)+0.5;\n" +
-            "  bg+=starLayer(s1,80.0,0.00,0.00,0.951,0.309)*f1;\n" +
-            "  bg+=starLayer(s2,80.0,0.37,0.21,0.423,0.906)*f2*0.85;\n" +
-            "  bg+=starLayer(s3,80.0,0.71,0.53,-0.602,0.799)*f3*0.70;\n" +
+            "  bg+=starLayer(s1,80.0,0.00,0.00,0.951,0.309,0.0)*f1;\n" +
+            "  bg+=starLayer(s2,80.0,0.37,0.21,0.423,0.906,1.0)*f2*0.85;\n" +
+            "  bg+=starLayer(s3,80.0,0.71,0.53,-0.602,0.799,2.0)*f3*0.70;\n" +
             // (deep-space floor moved to the gas pass with the haze)
             "  col+=T*bg;\n" +
 
@@ -477,10 +477,14 @@ public class NebulaDream extends DreamService {
         // Pass 1 (gas, low-res FBO): program + locations
         private int progGas, gAPos, gUTime, gURes, gUNoise, gUZoom;
         // Pass 2 (composite, native res): program + locations
-        private int progComp, cAPos, cUTime, cURes, cUZoom, cUHdr, cUHdrKnee, cUHdrGain, cUHdrMax, cUGas;
+        private int progComp, cAPos, cUTime, cURes, cUZoom, cUHdr, cUHdrKnee, cUHdrGain, cUHdrMax, cUStarFlare, cUGas;
         private int noiseTex;            // v4: 3D noise texture
         private int gasFbo, gasTex;      // v4: low-res gas render target
         private int gasW, gasH;
+        private final java.util.Random sfRng = new java.util.Random();
+        private int sfSlot;
+        private float sfStart = -1f, sfDur, sfMag, sfNext = 3f;
+        private int sfLayer;
         private FloatBuffer quadBuf;
         private long startMs;
         private long lastDrawMs;
@@ -536,6 +540,7 @@ public class NebulaDream extends DreamService {
             cUHdrKnee= GLES20.glGetUniformLocation(progComp,"uHdrKnee");
             cUHdrGain= GLES20.glGetUniformLocation(progComp,"uHdrGain");
             cUHdrMax = GLES20.glGetUniformLocation(progComp,"uHdrMax");
+            cUStarFlare = GLES20.glGetUniformLocation(progComp,"uStarFlare");
             cUGas    = GLES20.glGetUniformLocation(progComp,"uGas");
 
             noiseTex = buildNoiseTexture(64); // re-upload each context (ids go stale); CPU gen is cached
@@ -631,6 +636,33 @@ public class NebulaDream extends DreamService {
             GLES20.glUniform1f(cUHdrKnee,HDR_KNEE);
             GLES20.glUniform1f(cUHdrGain,HDR_GAIN);
             GLES20.glUniform1f(cUHdrMax,HDR_MAX);
+            if (t >= sfNext) {
+                sfSlot++;
+                sfStart = t;
+                sfDur = 1.2f + sfRng.nextFloat() * 1.8f;
+                sfMag = 0.5f + 0.5f * sfRng.nextFloat();
+                float szsp = 0.0120f * zoomMul;
+                float sph = t * szsp;
+                float bestF = -1f;
+                float[] offsets = {0f, 0.333f, 0.667f};
+                for (int i = 0; i < 3; i++) {
+                    float ti = sph + offsets[i];
+                    ti = ti - (float)Math.floor(ti);
+                    float fi = Math.max(0f, Math.min(1f, (ti - 0f) / 0.40f))
+                             * Math.max(0f, Math.min(1f, (1f - ti) / 0.40f));
+                    if (fi > bestF) { bestF = fi; sfLayer = i; }
+                }
+                sfNext = t + sfDur + 1f + sfRng.nextFloat() * 2.5f;
+            }
+            float sfEnv = 0f;
+            if (sfStart >= 0f && t < sfStart + sfDur) {
+                float p = (t - sfStart) / sfDur;
+                float s = (float)Math.sin(Math.PI * p);
+                sfEnv = s * s;
+            }
+            if (sfEnv > 0.01f && fpsN == 1)
+                Log.i(TAG,"FLARE slot="+sfSlot+" env="+String.format("%.3f",sfEnv)+" mag="+String.format("%.2f",sfMag)+" layer="+sfLayer);
+            GLES20.glUniform4f(cUStarFlare, (float)sfSlot, sfEnv, sfMag, (float)sfLayer);
             GLES20.glActiveTexture(GLES20.GL_TEXTURE0);
             GLES20.glBindTexture(GLES20.GL_TEXTURE_2D,gasTex);
             GLES20.glUniform1i(cUGas,0);
