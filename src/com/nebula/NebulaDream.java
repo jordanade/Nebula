@@ -262,10 +262,11 @@ public class NebulaDream extends DreamService {
             // A single macro front per pixel, not a per-sample volume contour:
             // this gives the dust layer one readable silhouette and one matching rim.
             "  vec3 fp=ro+rd*7.5;\n" +
-            "  float frontNoise=texture(uNoise,fp*0.055+vec3(2.7,5.1,uTime*0.006)).r-0.5;\n" +
-            "  float front=uv.y+0.18*uv.x+0.18*sin(uv.x*2.1+0.7)+frontNoise*0.34+0.03;\n" +
-            "  float frontDustSide=1.0-smoothstep(-0.06,0.18,front);\n" +
-            "  float frontRim=exp(-front*front*36.0);\n" +
+            "  float frontNoise=texture(uNoise,fp*0.050+vec3(2.7,5.1,uTime*0.004)).r-0.5;\n" +
+            "  float front=uv.y+0.20*uv.x+0.18*sin(uv.x*2.25+0.7)+frontNoise*0.32+0.02;\n" +
+            "  float frontDustSide=1.0-smoothstep(-0.12,0.06,front);\n" +
+            "  float frontHalo=exp(-front*front*18.0)*smoothstep(-0.16,0.20,front);\n" +
+            "  float frontRim=exp(-front*front*72.0)*smoothstep(-0.03,0.14,front);\n" +
             // ── NEBULA shading: highly-transparent EMISSIVE gas. No light march,
             // no phase — the gas GLOWS (emission nebula), it is not sunlit cloud.
             // Very low extinction: rays cross whole masses; stars shine through.
@@ -289,13 +290,15 @@ public class NebulaDream extends DreamService {
             // (it accumulated into visible static when the nebula filled the screen).
             "    float dith=mix(0.010,0.0,nearAmt);\n" +
             "    d=max(d+(fract(sin(dot(p.xy+vec2(p.z),vec2(12.9898,78.233)))*43758.55)-0.5)*dith,0.0);\n" +
-            "    float dustMacro=smoothstep(0.47,0.74,texture(uNoise,p*0.045+vec3(6.3,1.7,0.0)).r);\n" +
-            "    float nearDust=1.0-smoothstep(4.0,14.0,t);\n" +
+            "    float dustMacro=smoothstep(0.53,0.80,texture(uNoise,p*0.038+vec3(6.3,1.7,0.0)).r);\n" +
+            "    float frontDetail=smoothstep(0.34,0.82,texture(uNoise,p*0.085+vec3(9.1,3.8,uTime*0.003)).r);\n" +
+            "    float nearDust=1.0-smoothstep(4.0,12.0,t);\n" +
             "    float dustD=dustMacro*frontDustSide*nearDust;\n" +
+            "    float dustOcc=dustD*dustD;\n" +
             "    if(d>0.01){\n" +
             "      float dt=0.11*g;\n" +
             "      vec3 emit=tcol*d*0.34+ambCol*d*0.18;\n" +        // dimmer interiors; rims carry more of the shape
-            "      emit*=1.0-0.42*dustD;\n" +
+            "      emit*=1.0-0.50*dustOcc;\n" +
             // Relief + rims fade into the NEAR layers; mid/rear stays pure soft
             // glow, avoiding a hard distance where dark blobs become bright rims.
             "      if(nearAmt>0.001){\n" +
@@ -307,19 +310,21 @@ public class NebulaDream extends DreamService {
             // (density jumping from ~nothing to substantial between samples).
             "        float rim=smoothstep(0.015,0.16,d-dPrev)*clamp(1.0-dPrev*6.0,0.0,1.0);\n" +
             "        emit+=mix(tcol,vec3(1.0,0.62,0.92),0.35)*rim*1.15*nearAmt;\n" +
-            "        emit+=mix(tcol,vec3(1.0,0.60,0.94),0.45)*frontRim*d*(1.0-frontDustSide*0.45)*0.95*nearAmt;\n" +
+            "        float frontGrain=0.42+0.82*frontDetail;\n" +
+            "        emit+=mix(tcol,vec3(0.98,0.42,0.88),0.46)*frontHalo*d*frontGrain*0.78*nearAmt;\n" +
+            "        emit+=mix(tcol,vec3(1.0,0.62,0.98),0.56)*frontRim*d*frontGrain*2.20*nearAmt;\n" +
             "      }\n" +
             // Distance falloff: deep gas contributes progressively less, so the
             // mid/rear stack reads as faint depth, not an accumulated bright wall.
             "      emit*=1.0/(1.0+t*0.055);\n" +
-            "      col+=T*vec3(0.006,0.005,0.018)*dustD*dt;\n" +
+            "      col+=T*vec3(0.004,0.003,0.012)*dustD*dt;\n" +
             "      col+=T*emit*dt;\n" +
-            "      T*=exp(-(d*0.08+dustD*0.44)*dt);\n" +            // gas + visible foreground dust extinction
+            "      T*=exp(-(d*0.08+dustOcc*0.50)*dt);\n" +         // gas + visible foreground dust extinction
             "      t+=dt;\n" +
             "    } else if(dustD>0.015){\n" +
             "      float dt=0.11*g;\n" +
-            "      col+=T*vec3(0.004,0.004,0.014)*dustD*dt;\n" +
-            "      T*=exp(-dustD*0.44*dt);\n" +
+            "      col+=T*(vec3(0.003,0.003,0.010)*dustD+vec3(0.030,0.010,0.034)*frontRim*dustD*frontDetail)*dt;\n" +
+            "      T*=exp(-dustOcc*0.50*dt);\n" +
             "      t+=dt;\n" +
             "    } else { t+=0.28*g; }\n" +
             "    dPrev=d;\n" +
