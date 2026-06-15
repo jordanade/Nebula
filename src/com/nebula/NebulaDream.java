@@ -428,9 +428,8 @@ public class NebulaDream extends DreamService {
             "    vec2 df=f-h2(cell+3.7);\n" +
             "    float d=length(df);\n" +
             "    float mag=0.18+0.82*pow(h1(cell+7.7),3.0);\n" +
-            "    float sel=fract(sin(dot(cell,vec2(127.1,311.7))+uStarFlare.x*43.17)*43758.5);\n" +
-            "    float isFlare=step(abs(lid-uStarFlare.w),0.5)*step(0.9975,sel);\n" +
-            "    float fl=isFlare*uStarFlare.y*uStarFlare.z;\n" +
+            "    float isFlare=step(abs(lid-uStarFlare.w),0.5)*(1.0-step(0.5,length(cell-vec2(uStarFlare.x,uStarFlare.y))));\n" +
+            "    float fl=isFlare*uStarFlare.z;\n" +
             "    float fl2=fl*fl;\n" +
             "    float bri=mag+fl2*8.0;\n" +
             "    float rad=length(uv-0.5);\n" +
@@ -508,6 +507,35 @@ public class NebulaDream extends DreamService {
         private int sfSlot;
         private float sfStart = -1f, sfDur, sfMag, sfNext = 3f;
         private int sfLayer;
+        private float sfCellX, sfCellY;
+
+        private static float cpuFract(float x) { return x - (float)Math.floor(x); }
+        private static float cpuH1(float ix, float iy) {
+            float px = cpuFract(ix * 0.1031f);
+            float py = cpuFract(iy * 0.1030f);
+            float d = px*(px+19.19f) + py*(py+19.19f);
+            px += d;
+            py += d;
+            return cpuFract(px * py);
+        }
+        private static float cpuVn(float px, float py) {
+            float ix = (float)Math.floor(px), iy = (float)Math.floor(py);
+            float fx = px - ix, fy = py - iy;
+            float ux = fx*fx*fx*(fx*(fx*6f-15f)+10f);
+            float uy = fy*fy*fy*(fy*(fy*6f-15f)+10f);
+            float a = cpuH1(ix, iy), b = cpuH1(ix+1, iy);
+            float c = cpuH1(ix, iy+1), d = cpuH1(ix+1, iy+1);
+            return (a*(1-ux)+b*ux)*(1-uy) + (c*(1-ux)+d*ux)*uy;
+        }
+        private boolean cpuHasStar(float cellX, float cellY, float ox, float oy) {
+            float dn = cpuVn(cellX*0.02f+ox*0.1f, cellY*0.02f+oy*0.1f)*0.65f
+                      + cpuVn(cellX*0.06f+11f, cellY*0.06f+11f)*0.35f;
+            float dens = Math.max(0f, Math.min(1f, (dn-0.44f)/(0.64f-0.44f)));
+            dens = dens*dens*(3f-2f*dens);
+            float thresh = 0.972f - dens*0.53f;
+            float h = cpuH1(cellX, cellY);
+            return h > thresh;
+        }
         private FloatBuffer quadBuf;
         private long startMs;
         private long lastDrawMs;
@@ -660,22 +688,30 @@ public class NebulaDream extends DreamService {
             GLES20.glUniform1f(cUHdrGain,HDR_GAIN);
             GLES20.glUniform1f(cUHdrMax,HDR_MAX);
             if (t >= sfNext) {
-                sfSlot++;
+                float r = sfRng.nextFloat();
+                sfMag = r * r;
+                sfDur = 1.0f + sfRng.nextFloat() * 1.5f;
                 sfStart = t;
-                sfDur = 1.2f + sfRng.nextFloat() * 1.8f;
-                sfMag = 0.5f + 0.5f * sfRng.nextFloat();
                 float szsp = 0.0120f * zoomMul;
                 float sph = t * szsp;
                 float bestF = -1f;
-                float[] offsets = {0f, 0.333f, 0.667f};
+                float[][] layerOff = {{0f,0f},{0.37f,0.21f},{0.71f,0.53f}};
+                float[] phOff = {0f, 0.333f, 0.667f};
                 for (int i = 0; i < 3; i++) {
-                    float ti = sph + offsets[i];
+                    float ti = sph + phOff[i];
                     ti = ti - (float)Math.floor(ti);
                     float fi = Math.max(0f, Math.min(1f, (ti - 0f) / 0.40f))
                              * Math.max(0f, Math.min(1f, (1f - ti) / 0.40f));
                     if (fi > bestF) { bestF = fi; sfLayer = i; }
                 }
-                sfNext = t + sfDur + 1f + sfRng.nextFloat() * 2.5f;
+                float lox = layerOff[sfLayer][0], loy = layerOff[sfLayer][1];
+                for (int attempt = 0; attempt < 200; attempt++) {
+                    sfCellX = (float)Math.floor(sfRng.nextFloat() * 80f + lox);
+                    sfCellY = (float)Math.floor(sfRng.nextFloat() * 80f + loy);
+                    if (cpuHasStar(sfCellX, sfCellY, lox, loy)) break;
+                }
+                sfNext = t + sfDur + 0.05f + sfRng.nextFloat() * 0.15f;
+                Log.i(TAG,"FLARE cell="+sfCellX+","+sfCellY+" layer="+sfLayer+" mag="+String.format("%.3f",sfMag));
             }
             float sfEnv = 0f;
             if (sfStart >= 0f && t < sfStart + sfDur) {
@@ -683,9 +719,7 @@ public class NebulaDream extends DreamService {
                 float s = (float)Math.sin(Math.PI * p);
                 sfEnv = s * s;
             }
-            if (sfEnv > 0.01f && fpsN == 1)
-                Log.i(TAG,"FLARE slot="+sfSlot+" env="+String.format("%.3f",sfEnv)+" mag="+String.format("%.2f",sfMag)+" layer="+sfLayer);
-            GLES20.glUniform4f(cUStarFlare, (float)sfSlot, sfEnv, sfMag, (float)sfLayer);
+            GLES20.glUniform4f(cUStarFlare, sfCellX, sfCellY, sfEnv * sfMag, (float)sfLayer);
             GLES20.glActiveTexture(GLES20.GL_TEXTURE0);
             GLES20.glBindTexture(GLES20.GL_TEXTURE_2D,gasTex);
             GLES20.glUniform1i(cUGas,0);
