@@ -2,6 +2,38 @@
 
 All notable changes to Nebula are documented here.
 
+## 4.2 — 2026-06-15
+
+A performance and controls release for the v4 volumetric renderer. The main
+change is making the default settings cooler and more explicit while leaving
+higher-quality options honest for faster Android TV hardware.
+
+### Changed
+- **Cooler default performance profile** — render resolution now defaults to
+  35% and frame rate defaults to 25 fps. On the NVIDIA Shield test device this
+  held ~25 fps with roughly 23–26 ms of sampled GPU work inside a 40 ms frame
+  budget.
+- **Honest render-resolution control** — the render slider now covers 10–100%
+  and the renderer uses the selected value directly. There is no hidden
+  low-resolution clamp behind higher user-selected values.
+- **Practical frame-rate options** — frame caps are now 10, 15, 20, 25, and
+  30 fps. The previous 60 fps and uncapped options were removed because this
+  shader cannot use them meaningfully on normal Android TV hardware.
+- **Slower special star flares** — the occasional accent flares now use longer
+  envelopes with very short handoff gaps, so the special flashes feel less
+  twitchy while remaining part of the normal star field.
+- **Lighter runtime telemetry** — GPU work logging now samples occasional
+  frames instead of forcing `glFinish()` every frame, reducing measurement
+  overhead during normal screensaver operation.
+- **Simpler motion controls** — removed the separate writhe-speed preference;
+  zoom speed remains and now uses a smoother exponential mapping.
+
+### Fixed
+- Reduced default thermal load compared with v4.1 while preserving the same
+  volumetric look at a lower gas FBO resolution.
+- Corrected the documented Shield command for manually starting the screensaver
+  by launching Somnambulator with the desk-dock category.
+
 ## 4.1 — 2026-06-15
 
 An art-direction and stability pass on the v4 volumetric renderer. The release

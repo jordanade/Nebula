@@ -1,10 +1,10 @@
 # Nebula
 
-A GPU-accelerated nebula fly-through screensaver for Android TV. Vibe coded with Claude Sonnet 4.6, Opus 4.6/4.8, Fable 5, and GPT 5.5.
+A GPU-accelerated nebula fly-through screensaver for Android TV. Vibe coded with Claude Sonnet 4.6, Opus 4.6/4.8, Fable 5, and GPT-5.5.
 
 ## What it looks like
 
-A deep-space nebula rendered in real-time volumetric raymarching on the GPU. The camera flies through translucent clouds of emissive gas — sculpted by a tiling 3D noise field with Worley erosion and lit by gradient relief, shell halos, and ionization-front rims — in a palette centred on deep violet and indigo, with magenta and cool-blue accents. Foreground masses occlude background stars with true depth; macro dust forms add broad light/dark structure without screen-space stencil shadows; dense star clusters glow as pointillistic distant galaxies, and the brightest stars throw subtle aperiodic HDR flares with four-point diffraction spikes. A split-resolution pipeline keeps stars pin-sharp at native panel resolution while the gas runs at a tunable lower resolution. Runs at a steady 20 fps in HDR on a NVIDIA Shield.
+A deep-space nebula rendered in real-time volumetric raymarching on the GPU. The camera flies through translucent clouds of emissive gas — sculpted by a tiling 3D noise field with Worley erosion and lit by gradient relief, shell halos, and ionization-front rims — in a palette centred on deep violet and indigo, with magenta and cool-blue accents. Foreground masses occlude background stars with true depth; macro dust forms add broad light/dark structure without screen-space stencil shadows; dense star clusters glow as pointillistic distant galaxies, and the brightest stars throw subtle aperiodic HDR flares with four-point diffraction spikes. A split-resolution pipeline keeps stars pin-sharp at native panel resolution while the gas runs at a tunable lower resolution. Defaults to 35% gas resolution and 25 fps for steady HDR playback on a NVIDIA Shield.
 
 Designed for OLED and HDR displays — deep black voids between dramatic nebula ridges, with the brightest cores driven into real panel headroom. All elements are in continuous motion.
 
@@ -12,7 +12,7 @@ https://github.com/user-attachments/assets/64694f09-465d-44a0-8d85-9e21705ab982
 
 ## Technical approach
 
-- **Volumetric raymarching** — a 46-step ray march through a tiling 3D noise field renders true-depth gas clouds; the camera flies through the nebula, with foreground masses occluding background stars via a transmittance channel
+- **Volumetric raymarching** — a 42-step ray march through a tiling 3D noise field renders true-depth gas clouds; the camera flies through the nebula, with foreground masses occluding background stars via a transmittance channel
 - **Tiling 3D noise texture** — a 64³ RGBA texture (R = 3-octave value FBM, G = inverted Worley) generated once on the CPU; replaces all analytic noise with texture fetches for a ~6× speedup
 - **Coverage × billow density** — a low-frequency coverage gate carves large cloud masses, eroded by two scales of Worley detail for organic cauliflower edges
 - **Three-stage density LOD** — near gas: full 4-fetch erosion; mid-range: coarse erosion only; far-field: 2 low-frequency fetches. Triples effective march depth while keeping frame time flat
@@ -22,9 +22,9 @@ https://github.com/user-attachments/assets/64694f09-465d-44a0-8d85-9e21705ab982
 - **Macro dust fronts** — large foreground dust forms are driven by volumetric noise rather than a clean front mask, so they add broad shape and star occlusion without obvious curved shadow artifacts
 - **Camera-origin fade** — the ray march starts past the camera-origin slab and fades in quickly, preventing a cloud exactly on the camera from filling the whole frame with flat colour
 - **Ultra-transparent extinction** — very low opacity so stars shine through all masses; the deep march rarely hits early-out, giving a consistent frame time
-- **Split-resolution pipeline** — gas is raymarched into a low-res FBO (render-scale setting); stars, diffraction spikes, and galaxy haze are drawn at native panel resolution in a full-res composite pass
+- **Split-resolution pipeline** — gas is raymarched into a low-res FBO (render-resolution setting, 10–100%, default 35%); stars, diffraction spikes, and galaxy haze are drawn at native panel resolution in a full-res composite pass
 - **Spatial dither** — breaks far-field 8-bit texture banding; fades out for near gas where dense sampling already hides quantisation
-- **Galaxy haze + HDR flares** — dense star clusters glow as hazy distant galaxies coincident with the star layer; the brightest stars throw small, aperiodic HDR flashes with four-point diffraction spikes
+- **Galaxy haze + HDR flares** — dense star clusters glow as hazy distant galaxies coincident with the star layer; the brightest stars throw small, aperiodic HDR flashes with four-point diffraction spikes and slower special-flare envelopes
 - **Scale-space fractal zoom** — rotation applied after scaling ensures `pB(t=1) = pA(t=0)` exactly at every octave boundary; new detail continuously elaborates on visible structure with no position jumps, resets, or crossfade artifacts
 - **Three-phase star system** — staggered radial zoom layers with symmetric smoothstep fade-in/out; any single layer's reset is covered by the other two
 - **HDR output** — opt-in FP16 scRGB-linear surface with feature detection and automatic SDR fallback; highlight cores extend into panel headroom while mid-tones keep the tuned SDR look
@@ -64,7 +64,9 @@ adb shell settings put secure sleep_timeout 1200000
 Trigger immediately for testing:
 
 ```bash
-adb shell am start -n com.android.systemui/.Somnambulator
+adb shell am start -a android.intent.action.MAIN \
+  -c android.intent.category.DESK_DOCK \
+  -n com.android.systemui/.Somnambulator
 ```
 
 ## Build from source
