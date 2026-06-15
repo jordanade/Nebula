@@ -4,7 +4,7 @@ A GPU-accelerated nebula fly-through screensaver for Android TV. Vibe coded with
 
 ## What it looks like
 
-A deep-space nebula rendered in real-time volumetric raymarching on the GPU. The camera flies through translucent clouds of emissive gas — sculpted by a tiling 3D noise field with Worley erosion and lit by gradient relief and ionization-front rims — in a palette centred on deep violet and indigo, with magenta and cool-blue accents. Foreground masses occlude background stars with true depth; bright structural rims trace every gas boundary; dense star clusters glow as pointillistic distant galaxies, and the brightest stars throw aperiodic HDR flares with cross-hatched diffraction spikes. A split-resolution pipeline keeps stars pin-sharp at native panel resolution while the gas runs at a tunable lower resolution. Runs at a steady 20 fps in HDR on a NVIDIA Shield.
+A deep-space nebula rendered in real-time volumetric raymarching on the GPU. The camera flies through translucent clouds of emissive gas — sculpted by a tiling 3D noise field with Worley erosion and lit by gradient relief, shell halos, and ionization-front rims — in a palette centred on deep violet and indigo, with magenta and cool-blue accents. Foreground masses occlude background stars with true depth; macro dust forms add broad light/dark structure without screen-space stencil shadows; dense star clusters glow as pointillistic distant galaxies, and the brightest stars throw subtle aperiodic HDR flares with four-point diffraction spikes. A split-resolution pipeline keeps stars pin-sharp at native panel resolution while the gas runs at a tunable lower resolution. Runs at a steady 20 fps in HDR on a NVIDIA Shield.
 
 Designed for OLED and HDR displays — deep black voids between dramatic nebula ridges, with the brightest cores driven into real panel headroom. All elements are in continuous motion.
 
@@ -18,11 +18,13 @@ https://github.com/user-attachments/assets/57fb08e1-4646-4891-99c6-fbb6daee7a99
 - **Three-stage density LOD** — near gas: full 4-fetch erosion; mid-range: coarse erosion only; far-field: 2 low-frequency fetches. Triples effective march depth while keeping frame time flat
 - **Emissive gas** — the nebula glows (emission nebula, not sunlit cloud), tinted by a four-stop palette (orange → magenta → violet → blue) driven by a drifting large-scale region field
 - **Gradient relief lighting** — density-gradient normals give near layers directional lit/shadow sculpting; mid and rear layers stay as pure soft glow
-- **Ionization-front rims** — bright edges fire at every gas boundary where the ray crosses from empty space into dense cloud, giving bright structural outlines for free
-- **Ultra-transparent extinction** — very low opacity so stars shine through all masses; the deep march never hits early-out, giving a consistent frame time
+- **Ionization-front rims + shell halos** — bright edges fire at gas boundaries while a softer shell halo gives near clouds readable light/dark sides without drawing a visible screen-space stencil
+- **Macro dust fronts** — large foreground dust forms are driven by volumetric noise rather than a clean front mask, so they add broad shape and star occlusion without obvious curved shadow artifacts
+- **Camera-origin fade** — the ray march starts past the camera-origin slab and fades in quickly, preventing a cloud exactly on the camera from filling the whole frame with flat colour
+- **Ultra-transparent extinction** — very low opacity so stars shine through all masses; the deep march rarely hits early-out, giving a consistent frame time
 - **Split-resolution pipeline** — gas is raymarched into a low-res FBO (render-scale setting); stars, diffraction spikes, and galaxy haze are drawn at native panel resolution in a full-res composite pass
 - **Spatial dither** — breaks far-field 8-bit texture banding; fades out for near gas where dense sampling already hides quantisation
-- **Galaxy haze + HDR flares** — dense star clusters glow as hazy distant galaxies coincident with the star layer; the brightest stars throw aperiodic HDR flashes with cross-hatched diffraction spikes
+- **Galaxy haze + HDR flares** — dense star clusters glow as hazy distant galaxies coincident with the star layer; the brightest stars throw small, aperiodic HDR flashes with four-point diffraction spikes
 - **Scale-space fractal zoom** — rotation applied after scaling ensures `pB(t=1) = pA(t=0)` exactly at every octave boundary; new detail continuously elaborates on visible structure with no position jumps, resets, or crossfade artifacts
 - **Three-phase star system** — staggered radial zoom layers with symmetric smoothstep fade-in/out; any single layer's reset is covered by the other two
 - **HDR output** — opt-in FP16 scRGB-linear surface with feature detection and automatic SDR fallback; highlight cores extend into panel headroom while mid-tones keep the tuned SDR look

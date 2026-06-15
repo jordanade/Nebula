@@ -2,6 +2,36 @@
 
 All notable changes to Nebula are documented here.
 
+## 4.1 — 2026-06-15
+
+An art-direction and stability pass on the v4 volumetric renderer. The release
+keeps the same split-resolution GLES 3.0 pipeline, but makes the nebula forms
+read more naturally and tones down star flares so they sit inside the star
+field instead of looking like a separate overlay.
+
+### Changed
+- **More natural bright star flares** — the occasional accent flares are now
+  much smaller, subtler, and limited to four-point vertical/horizontal
+  diffraction spikes. Twinkle timing is faster across both ordinary stars and
+  accent flares.
+- **Macro nebula/dust forms** — foreground gas now has broader light/dark
+  shape driven by volumetric noise and shell halos, giving the clouds more
+  defined sides without relying on a clean screen-space shadow stencil.
+- **Softer nebula boundaries** — near-cloud shell halos preserve the useful
+  top/bottom light-dark read while avoiding the obvious curved dark shadow that
+  could cut across the screen.
+- **Camera-origin fade** — the ray march starts past the camera-origin slab and
+  fades in quickly, so flying through a cloud no longer fills the entire frame
+  with a flat colour wash.
+
+### Fixed
+- Removed the large 8-point accent flare shape from v4 and replaced it with a
+  star-sized four-point flare that better matches the surrounding star field.
+- Reduced foreground dust quantisation and clumpy near-field breakup by using
+  fewer, larger macro forms.
+- Eliminated the most visible screen-wide stencil effect from the macro dust
+  front.
+
 ## 4.0 — 2026-06-13
 
 A ground-up rebuild of the gas rendering: the flat 2D FBM nebula is replaced by
