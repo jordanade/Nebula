@@ -12,17 +12,19 @@
         <item>off</item>
     </string-array>
 
-    <!-- Frame rate cap (fps; 0 = uncapped) -->
+    <!-- Frame rate cap (fps). 25fps is the default; higher caps are for faster hardware. -->
     <string-array name="frame_cap_entries">
-        <item>15 fps (coolest)</item>
+        <item>10 fps (coolest)</item>
+        <item>15 fps</item>
+        <item>20 fps</item>
+        <item>25 fps (default)</item>
         <item>30 fps</item>
-        <item>60 fps</item>
-        <item>Uncapped</item>
     </string-array>
     <string-array name="frame_cap_values">
+        <item>10</item>
         <item>15</item>
+        <item>20</item>
+        <item>25</item>
         <item>30</item>
-        <item>60</item>
-        <item>0</item>
     </string-array>
 </resources>

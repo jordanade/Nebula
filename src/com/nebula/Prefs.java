@@ -16,7 +16,6 @@ final class Prefs {
     static final String RENDER_SCALE = "render_scale";  // 0.50 .. 1.00
     static final String FRAME_CAP    = "frame_cap";     // fps, 0 = uncapped
     static final String ZOOM_SPEED   = "zoom_speed";    // zSpd
-    static final String WRITHE_SPEED = "writhe_speed";  // slowT rate
 
     static final String HDR_AUTO = "auto";
     static final String HDR_ON   = "on";
@@ -39,21 +38,20 @@ final class Prefs {
     }
 
     // Slider prefs are stored as ints (see SliderPreference); scale to floats.
-    // Default 60%: a barely-visible softening on the low-frequency gas that cuts
+    // Default 35%: a modest softening on the low-frequency gas that cuts
     // fragment cost for cooler all-night running. Raise toward 100 for more detail
-    // (the Shield has plenty of thermal headroom).
-    float renderScale() { return clampF(getIntPref(RENDER_SCALE, 33) / 100f, 0.25f, 1.0f); }
+    // when the hardware has the thermal headroom. Values below 35 are an
+    // explicit low-power escape hatch, not the recommended baseline.
+    float renderScale() { return clampF(getIntPref(RENDER_SCALE, 35) / 100f, 0.10f, 1.0f); }
 
-    // Speeds use a 1–10 scale with 4 as the default. Zoom is a multiplier
-    // (4 -> 1.0) applied to both nebula and star zoom, preserving their ratio.
-    float zoomMul()    { return clampF(getIntPref(ZOOM_SPEED, 4) / 4f, 0.1f, 3.0f); }
-    // Writhe maps to its rate; 4 -> 0.045. Scales linearly with the 1–10 slider.
-    float writheRate() { return clampF(0.045f * getIntPref(WRITHE_SPEED, 4) / 4f, 0.0f, 0.2f); }
+    float zoomMul() {
+        int s = getIntPref(ZOOM_SPEED, 4);
+        return Math.max(0.15f, (float)Math.pow(2.0, (s - 4) / 2.4));
+    }
 
-    // Frame cap is a ListPreference (string), to keep the "uncapped" option.
-    // Default 15: the slow nebula motion reads fine at 15fps, and capping lets the
-    // GPU idle between frames (cooler, lower power). 30/60/uncapped remain available.
-    int frameCapFps() { return clampI(getStringInt(FRAME_CAP, 20), 0, 240); }
+    // Frame cap is a ListPreference (string). 25fps is the default;
+    // higher caps are available for faster hardware.
+    int frameCapFps() { return clampI(getStringInt(FRAME_CAP, 25), 10, 30); }
 
     private int getIntPref(String key, int def) {
         try { return sp.getInt(key, def); }

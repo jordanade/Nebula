@@ -7,7 +7,6 @@
     <string name="pref_render_scale_title">Render resolution</string>
     <string name="pref_frame_cap_title">Frame rate</string>
     <string name="pref_zoom_title">Zoom speed</string>
-    <string name="pref_writhe_title">Writhe speed</string>
 
     <string name="cat_quality">Quality &amp; performance</string>
     <string name="cat_motion">Motion</string>

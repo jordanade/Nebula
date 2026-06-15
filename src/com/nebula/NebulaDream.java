@@ -40,7 +40,7 @@ public class NebulaDream extends DreamService {
         // composite pass draws pin-sharp stars/spikes; the render-scale pref now
         // governs only the low-res gas FBO inside the renderer.
         sv.setRenderer(new NebulaRenderer(
-            prefs.zoomMul(), prefs.writheRate(), prefs.frameCapFps(), hdr,
+            prefs.zoomMul(), prefs.frameCapFps(), hdr,
             prefs.renderScale()));
         sv.setRenderMode(GLSurfaceView.RENDERMODE_CONTINUOUSLY);
         setContentView(sv);
@@ -190,14 +190,10 @@ public class NebulaDream extends DreamService {
             "vec3 hazeLayer(vec2 uv,float den,float ox,float oy){\n" +
             "  vec2 gp=uv*den+vec2(ox,oy);\n" +
             "  float gdn=vn(gp*0.02+vec2(ox*0.1,oy*0.1))*0.55+vn(gp*0.055+11.0)*0.30+vn(gp*0.13+5.0)*0.15;\n" +
-            "  float galaxy=smoothstep(0.50,0.82,gdn); galaxy*=galaxy;\n" +
-            "  float gdet=0.5+0.5*vn(gp*0.20+vec2(3.0,7.0));\n" +
-            "  gdet*=0.6+0.4*vn(gp*0.42+vec2(9.0,2.0));\n" +
-            "  float grain=vn(gp*0.55+vec2(5.0,1.0))*0.55+vn(gp*1.20+vec2(2.0,8.0))*0.30+vn(gp*2.60+vec2(7.0,3.0))*0.15;\n" +
-            "  grain=smoothstep(0.46,0.78,grain); grain*=grain;\n" +
-            "  galaxy*=0.30+0.55*gdet+0.85*grain;\n" +
-            "  vec3 gcol=mix(vec3(0.52,0.42,0.50),vec3(0.82,0.62,0.52),smoothstep(0.62,0.96,gdn));\n" +
-            "  return gcol*galaxy*0.11;\n" +
+            "  float r=max(gdn-0.55,0.0)/0.45;\n" +
+            "  float glow=exp(-2.5/(r+0.001))*step(0.001,r);\n" +
+            "  vec3 gcol=mix(vec3(0.40,0.42,0.62),vec3(1.0,0.92,0.80),glow);\n" +
+            "  return gcol*glow*glow*0.035;\n" +
             "}\n" +
             "float rm(float v,float l,float h){ return clamp((v-l)/(h-l),0.0,1.0); }\n" +
                         // ── Phase 3: density from the precomputed 3D noise TEXTURE (uniform, no
@@ -241,7 +237,7 @@ public class NebulaDream extends DreamService {
             "float hg(float c,float g){ float g2=g*g; return (1.0-g2)/pow(max(1.0+g2-2.0*g*c,1e-3),1.5); }\n" +
             "void main(){\n" +
             "  vec2 uv=vUv*2.0-1.0; uv.x*=uRes.x/uRes.y;\n" +
-            "  vec3 ro=vec3(sin(uTime*0.05)*0.7,cos(uTime*0.037)*0.5,uTime*0.40);\n" + // fly forward + gentle drift (off-axis)
+            "  vec3 ro=vec3(sin(uTime*0.05*uZoom)*0.7,cos(uTime*0.037*uZoom)*0.5,uTime*0.40*uZoom);\n" + // fly forward + gentle drift (off-axis)
             "  vec3 rd=normalize(vec3(uv,1.5));\n" +
             "  vec3 ldir=normalize(vec3(0.55,0.5,-0.35));\n" +
             // nebula colour: v3.1's purple-centred 4-stop palette, driven by a
@@ -271,10 +267,10 @@ public class NebulaDream extends DreamService {
             // ── NEBULA shading: highly-transparent EMISSIVE gas. No light march,
             // no phase — the gas GLOWS (emission nebula), it is not sunlit cloud.
             // Very low extinction: rays cross whole masses; stars shine through.
-            // 56 steps + faster growth + bigger empty strides: spends the banked
-            // perf headroom on REACH (~3x the old effective depth).
+            // 42 steps + faster growth + bigger empty strides: keeps the deep
+            // volumetric reach while leaving thermal headroom at 20fps.
             "  float dPrev=0.0;\n" +                                 // previous sample's density (for boundary rims)
-            "  for(int i=0;i<46;i++){\n" +
+            "  for(int i=0;i<42;i++){\n" +
             "    if(T<0.07) break;\n" +                              // raised early-out: imperceptible, restores termination on translucent gas
             // Distance-adaptive stepping: near gas finely sampled, far gas coarser
             // (it is smaller on screen) — the step budget reaches far deeper.
@@ -353,7 +349,7 @@ public class NebulaDream extends DreamService {
             "  hz+=hazeLayer(sr1/exp(t1*0.75)+0.5,80.0,0.00,0.00)*f1;\n" +
             "  hz+=hazeLayer(sr2/exp(t2*0.75)+0.5,80.0,0.37,0.21)*f2*0.85;\n" +
             "  hz+=hazeLayer(sr3/exp(t3*0.75)+0.5,80.0,0.71,0.53)*f3*0.70;\n" +
-            "  hz+=vec3(0.012,0.012,0.040);\n" +
+            "  hz+=vec3(0.0);\n" +
             "  vec3 pFar=ro+rd*55.0;\n" +
             "  float farBase=texture(uNoise,pFar*0.075).r;\n" +
             "  float farCov=smoothstep(0.39,0.68,texture(uNoise,pFar*0.027+0.31).r);\n" +
@@ -487,14 +483,16 @@ public class NebulaDream extends DreamService {
             "  col=mix(col,vec3(luma),smoothstep(1.6,3.4,pk)*0.45);\n" + // keep hue much longer — dense gas columns were rolling to white
             "  vec3 base=col/(col+vec3(0.85));\n" +
             "  base=pow(max(base,vec3(0.0)),vec3(0.92))*1.12;\n" +
+            "  float bk=step(1.0/255.0,max(max(base.r,base.g),base.b));\n" +
+            "  base*=bk;\n" +
             "  if(uHdr>0.5){\n" +
-            "    vec3 lin=pow(max(base,vec3(0.0)),vec3(2.2));\n" +
+            "    vec3 lin=pow(base,vec3(2.2));\n" +
             "    float lum=max(max(col.r,col.g),col.b);\n" +
             "    float hi=max(lum-uHdrKnee,0.0);\n" +
             "    float boost=uHdrGain*hi/(1.0+(uHdrGain/uHdrMax)*hi);\n" +
             "    fragColor=vec4(lin+lin*boost,1.0);\n" +
             "  } else {\n" +
-            "    base+=(h1(gl_FragCoord.xy)-0.5)/255.0;\n" +
+            "    base+=(h1(gl_FragCoord.xy)-0.5)/255.0*bk;\n" +
             "    fragColor=vec4(clamp(base,0.0,1.0),1.0);\n" +
             "  }\n" +
             "}\n";
@@ -542,14 +540,14 @@ public class NebulaDream extends DreamService {
         private FloatBuffer quadBuf;
         private long startMs;
         private long lastDrawMs;
-        private long fpsT0; private int fpsN; private long workAccNs; // PHASE 0 instrumentation
+        private long fpsT0; private int fpsN; private long workAccNs; // sampled GPU timing instrumentation
+        private int workSamples;
         private int screenW, screenH;
 
         private final float zoomMul;     // zoom-speed multiplier (1.0 = default)
-        private final float writheRate;  // slowT rate
         private final float gasScale;    // gas FBO scale relative to the native window
-        // Minimum ms between frames; 0 = uncapped. A frame cap roughly halves
-        // GPU load since the motion is slow enough that ~30fps is invisible.
+        // Minimum ms between frames. A cap only helps thermals when frame work
+        // is below the budget; at high render scales this shader is GPU-bound.
         private final long frameMs;
         private final HdrSurface hdr;
 
@@ -561,9 +559,8 @@ public class NebulaDream extends DreamService {
         private static final float HDR_GAIN = 30.0f;
         private static final float HDR_MAX  = 30.0f; // high ceiling: cores drive to the panel peak
 
-        NebulaRenderer(float zoomMul, float writheRate, int frameCapFps, HdrSurface hdr, float gasScale) {
+        NebulaRenderer(float zoomMul, int frameCapFps, HdrSurface hdr, float gasScale) {
             this.zoomMul = zoomMul;
-            this.writheRate = writheRate;
             this.frameMs = (frameCapFps > 0) ? Math.round(1000.0 / frameCapFps) : 0L;
             this.hdr = hdr;
             this.gasScale = gasScale;
@@ -651,16 +648,19 @@ public class NebulaDream extends DreamService {
             }
             lastDrawMs=SystemClock.elapsedRealtime();
 
-            // PHASE 0: log cadence fps + real GPU work-time per frame (glFinish).
+            // Log cadence plus sampled GPU work-time. Sampling avoids forcing a
+            // CPU/GPU sync every frame during normal screensaver operation.
             fpsN++;
             if (fpsT0==0) fpsT0=lastDrawMs;
             else if (lastDrawMs-fpsT0>=2000) {
+                float workMs = (workSamples > 0) ? workAccNs/(float)workSamples/1e6f : 0f;
                 Log.i(TAG,"SPIKE cadence="+String.format("%.1f",fpsN*1000f/(lastDrawMs-fpsT0))
-                    +"fps gpuWork="+String.format("%.1f",workAccNs/(float)fpsN/1e6f)
+                    +"fps gpuWork="+String.format("%.1f",workMs)
                     +"ms res="+screenW+"x"+screenH+" hdr="+(hdr!=null&&hdr.hdrActive));
-                fpsN=0; fpsT0=lastDrawMs; workAccNs=0;
+                fpsN=0; fpsT0=lastDrawMs; workAccNs=0; workSamples=0;
             }
-            long drawStartNs=System.nanoTime();
+            boolean sampleWork = (fpsN % 20) == 0;
+            long drawStartNs = sampleWork ? System.nanoTime() : 0L;
 
             float t=(SystemClock.elapsedRealtime()-startMs)/1000f;
 
@@ -693,7 +693,7 @@ public class NebulaDream extends DreamService {
             if (t >= sfNext) {
                 float r = sfRng.nextFloat();
                 sfMag = r * r;
-                sfDur = 1.0f + sfRng.nextFloat() * 1.5f;
+                sfDur = 1.55f + sfRng.nextFloat() * 2.35f;
                 sfStart = t;
                 float szsp = 0.0120f * zoomMul;
                 float sph = t * szsp;
@@ -713,7 +713,7 @@ public class NebulaDream extends DreamService {
                     sfCellY = (float)Math.floor(sfRng.nextFloat() * 80f + loy);
                     if (cpuHasStar(sfCellX, sfCellY, lox, loy)) break;
                 }
-                sfNext = t + sfDur + 0.05f + sfRng.nextFloat() * 0.15f;
+                sfNext = t + sfDur + 0.02f + sfRng.nextFloat() * 0.08f;
                 Log.i(TAG,"FLARE cell="+sfCellX+","+sfCellY+" layer="+sfLayer+" mag="+String.format("%.3f",sfMag));
             }
             float sfEnv = 0f;
@@ -731,8 +731,11 @@ public class NebulaDream extends DreamService {
             GLES20.glEnableVertexAttribArray(cAPos);
             GLES20.glDrawArrays(GLES20.GL_TRIANGLES,0,6);
 
-            GLES20.glFinish(); // PHASE 0: force GPU completion to time real work
-            workAccNs += System.nanoTime()-drawStartNs;
+            if (sampleWork) {
+                GLES20.glFinish();
+                workAccNs += System.nanoTime()-drawStartNs;
+                workSamples++;
+            }
         }
 
         private int buildProg(String vs,String fs){
