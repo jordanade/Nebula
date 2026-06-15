@@ -286,7 +286,7 @@ public class NebulaDream extends DreamService {
             "    else if(t<11.0){ nearAmt=1.0-smoothstep(6.0,11.0,t); d=mix(densMid(p),dens(p),nearAmt); }\n" +
             "    else if(t<20.0){ nearAmt=0.0; d=mix(densFar(p),densMid(p),1.0-smoothstep(11.0,20.0,t)); }\n" +
             "    else { nearAmt=0.0; d=densFar(p); }\n" +           // three-stage LOD: fine erosion fades first, then coarse
-            "    float cameraFade=smoothstep(1.6,4.8,t);\n" +
+            "    float cameraFade=smoothstep(1.45,2.9,t);\n" +
             // Dither breaks far-field 8-bit texture banding; near gas is sampled
             // densely enough that banding is invisible, so kill the dither there
             // (it accumulated into visible static when the nebula filled the screen).
