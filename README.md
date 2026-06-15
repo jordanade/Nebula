@@ -1,6 +1,6 @@
 # Nebula
 
-A GPU-accelerated nebula fly-through screensaver for Android TV. Vibe coded with Claude Sonnet 4.6 and Opus 4.6/4.8, with some help from GPT 5.5 and Fable 5.
+A GPU-accelerated nebula fly-through screensaver for Android TV. Vibe coded with Claude Sonnet 4.6, Opus 4.6/4.8, Fable 5, and GPT 5.5.
 
 ## What it looks like
 
@@ -8,7 +8,7 @@ A deep-space nebula rendered in real-time volumetric raymarching on the GPU. The
 
 Designed for OLED and HDR displays — deep black voids between dramatic nebula ridges, with the brightest cores driven into real panel headroom. All elements are in continuous motion.
 
-https://github.com/user-attachments/assets/57fb08e1-4646-4891-99c6-fbb6daee7a99
+https://github.com/user-attachments/assets/64694f09-465d-44a0-8d85-9e21705ab982
 
 ## Technical approach
 
