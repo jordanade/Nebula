@@ -257,8 +257,17 @@ public class NebulaDream extends DreamService {
             "                           : mix(midc,cool,(temp-0.66)/0.34);\n" +
             "  vec3 sunCol=tcol;\n" +
             "  vec3 ambCol=mix(vec3(0.09,0.07,0.24),tcol*0.30,0.40);\n" + // violet ambient tinted toward the region colour
-            "  float t=fract(sin(dot(gl_FragCoord.xy,vec2(41.3,289.1))+uTime)*43758.5)*0.08;\n" + // jittered start (halved — 0.16 was >1 step at close range, scattering adjacent pixels across different density slices)
+            "  float t=1.35+fract(sin(dot(gl_FragCoord.xy,vec2(41.3,289.1))+uTime)*43758.5)*0.08;\n" + // start beyond camera-origin gas; prevents full-frame color wash when flying through a cloud
             "  float T=1.0; vec3 col=vec3(0.0);\n" +
+            // A single macro front per pixel, not a per-sample volume contour:
+            // this gives the dust layer one readable silhouette and one matching rim.
+            "  vec2 frontDrift=vec2(sin(uTime*0.031),cos(uTime*0.027))*0.55;\n" +
+            "  vec3 fp=ro+rd*7.5+vec3(frontDrift,0.0);\n" +
+            "  float frontNoise=texture(uNoise,fp*0.050+vec3(2.7,5.1,uTime*0.004)).r-0.5;\n" +
+            "  float frontDetailNoise=texture(uNoise,fp*0.115+vec3(8.4,2.2,uTime*0.006)).r-0.5;\n" +
+            "  float frontBreak=smoothstep(0.30,0.76,texture(uNoise,fp*0.085+vec3(4.8,8.2,uTime*0.005)).r);\n" +
+            "  float front=uv.y+0.20*uv.x+0.18*sin((uv.x+frontDrift.x*0.12)*2.25+0.7+frontDrift.y*0.18)+frontNoise*0.32+frontDetailNoise*0.18+0.02;\n" +
+            "  float frontHalo=exp(-front*front*18.0)*smoothstep(-0.16,0.20,front);\n" +
             // ── NEBULA shading: highly-transparent EMISSIVE gas. No light march,
             // no phase — the gas GLOWS (emission nebula), it is not sunlit cloud.
             // Very low extinction: rays cross whole masses; stars shine through.
@@ -277,14 +286,22 @@ public class NebulaDream extends DreamService {
             "    else if(t<11.0){ nearAmt=1.0-smoothstep(6.0,11.0,t); d=mix(densMid(p),dens(p),nearAmt); }\n" +
             "    else if(t<20.0){ nearAmt=0.0; d=mix(densFar(p),densMid(p),1.0-smoothstep(11.0,20.0,t)); }\n" +
             "    else { nearAmt=0.0; d=densFar(p); }\n" +           // three-stage LOD: fine erosion fades first, then coarse
+            "    float cameraFade=smoothstep(1.45,2.9,t);\n" +
             // Dither breaks far-field 8-bit texture banding; near gas is sampled
             // densely enough that banding is invisible, so kill the dither there
             // (it accumulated into visible static when the nebula filled the screen).
             "    float dith=mix(0.010,0.0,nearAmt);\n" +
             "    d=max(d+(fract(sin(dot(p.xy+vec2(p.z),vec2(12.9898,78.233)))*43758.55)-0.5)*dith,0.0);\n" +
+            "    d*=cameraFade;\n" +
+            "    float dustMacro=smoothstep(0.53,0.80,texture(uNoise,p*0.038+vec3(6.3,1.7,0.0)).r);\n" +
+            "    float frontDetail=smoothstep(0.34,0.82,texture(uNoise,p*0.085+vec3(9.1,3.8,uTime*0.003)).r);\n" +
+            "    float nearDust=(1.0-smoothstep(4.0,12.0,t))*cameraFade;\n" +
+            "    float dustD=dustMacro*nearDust*(0.38+0.50*frontBreak);\n" +
+            "    float dustOcc=dustD*dustD;\n" +
             "    if(d>0.01){\n" +
             "      float dt=0.11*g;\n" +
             "      vec3 emit=tcol*d*0.34+ambCol*d*0.18;\n" +        // dimmer interiors; rims carry more of the shape
+            "      emit*=1.0-0.50*dustOcc;\n" +
             // Relief + rims fade into the NEAR layers; mid/rear stays pure soft
             // glow, avoiding a hard distance where dark blobs become bright rims.
             "      if(nearAmt>0.001){\n" +
@@ -296,12 +313,21 @@ public class NebulaDream extends DreamService {
             // (density jumping from ~nothing to substantial between samples).
             "        float rim=smoothstep(0.015,0.16,d-dPrev)*clamp(1.0-dPrev*6.0,0.0,1.0);\n" +
             "        emit+=mix(tcol,vec3(1.0,0.62,0.92),0.35)*rim*1.15*nearAmt;\n" +
+            "        float frontGrain=0.42+0.82*frontDetail;\n" +
+            "        float shell=smoothstep(0.018,0.10,d)*(1.0-smoothstep(0.22,0.48,d));\n" +
+            "        emit+=mix(tcol,vec3(1.0,0.48,0.90),0.48)*frontHalo*(d*0.20+shell*0.68)*frontGrain*1.16*nearAmt;\n" +
             "      }\n" +
             // Distance falloff: deep gas contributes progressively less, so the
             // mid/rear stack reads as faint depth, not an accumulated bright wall.
             "      emit*=1.0/(1.0+t*0.055);\n" +
+            "      col+=T*vec3(0.004,0.003,0.012)*dustD*dt;\n" +
             "      col+=T*emit*dt;\n" +
-            "      T*=exp(-d*dt*0.08);\n" +                         // ultra-transparent: stars through everything; also pins cost (no early-outs => constant frame time)
+            "      T*=exp(-(d*0.08+dustOcc*0.50)*dt);\n" +         // gas + visible foreground dust extinction
+            "      t+=dt;\n" +
+            "    } else if(dustD>0.015){\n" +
+            "      float dt=0.11*g;\n" +
+            "      col+=T*vec3(0.003,0.003,0.010)*dustD*dt;\n" +
+            "      T*=exp(-dustOcc*0.50*dt);\n" +
             "      t+=dt;\n" +
             "    } else { t+=0.28*g; }\n" +
             "    dPrev=d;\n" +
