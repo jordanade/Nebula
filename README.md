@@ -4,7 +4,7 @@ A GPU-accelerated nebula fly-through screensaver for Android TV. Vibe coded with
 
 ## What it looks like
 
-A deep-space nebula rendered in real-time volumetric raymarching on the GPU. The camera flies through translucent clouds of emissive gas — sculpted by a tiling 3D noise field with Worley erosion and lit by gradient relief, shell halos, and ionization-front rims — in a palette centred on deep violet and indigo, with magenta and cool-blue accents. Foreground masses occlude background stars with true depth; macro dust forms add broad light/dark structure without screen-space stencil shadows; dense star clusters glow as pointillistic distant galaxies, and the brightest stars throw subtle aperiodic HDR flares with four-point diffraction spikes. A split-resolution pipeline keeps stars pin-sharp at native panel resolution while the gas runs at a tunable lower resolution. Defaults to 35% gas resolution and 25 fps for steady HDR playback on a NVIDIA Shield.
+A deep-space nebula rendered in real-time volumetric raymarching on the GPU. The camera flies through translucent clouds of emissive gas — sculpted by a tiling 3D noise field with Worley erosion and lit by gradient relief, shell halos, and ionization-front rims — in a palette centred on deep violet and indigo, with magenta and cool-blue accents. Foreground masses occlude background stars with true depth; macro dust forms add broad light/dark structure without screen-space stencil shadows; dense star clusters glow as pointillistic distant galaxies, and the brightest stars throw subtle aperiodic HDR flares with four-point diffraction spikes. A split-resolution pipeline keeps stars pin-sharp at native app-surface resolution while the gas runs at an adaptive lower resolution. Defaults to 35% maximum gas resolution and 25 fps for steady HDR playback on a NVIDIA Shield.
 
 Designed for OLED and HDR displays — deep black voids between dramatic nebula ridges, with the brightest cores driven into real panel headroom. All elements are in continuous motion.
 
@@ -22,12 +22,12 @@ https://github.com/user-attachments/assets/64694f09-465d-44a0-8d85-9e21705ab982
 - **Macro dust fronts** — large foreground dust forms are driven by volumetric noise rather than a clean front mask, so they add broad shape and star occlusion without obvious curved shadow artifacts
 - **Camera-origin fade** — the ray march starts past the camera-origin slab and fades in quickly, preventing a cloud exactly on the camera from filling the whole frame with flat colour
 - **Ultra-transparent extinction** — very low opacity so stars shine through all masses; the deep march rarely hits early-out, giving a consistent frame time
-- **Split-resolution pipeline** — gas is raymarched into a low-res FBO (render-resolution setting, 10–100%, default 35%); stars, diffraction spikes, and galaxy haze are drawn at native panel resolution in a full-res composite pass
+- **Split-resolution pipeline** — gas is raymarched into a low-res FBO (render-resolution setting, 10–100%, default 35%, used as the adaptive upper bound); stars, diffraction spikes, and galaxy haze are drawn at native app-surface resolution in a full-res composite pass
 - **Spatial dither** — breaks far-field 8-bit texture banding; fades out for near gas where dense sampling already hides quantisation
 - **Galaxy haze + HDR flares** — dense star clusters glow as hazy distant galaxies coincident with the star layer; the brightest stars throw small, aperiodic HDR flashes with four-point diffraction spikes and slower special-flare envelopes
 - **Scale-space fractal zoom** — rotation applied after scaling ensures `pB(t=1) = pA(t=0)` exactly at every octave boundary; new detail continuously elaborates on visible structure with no position jumps, resets, or crossfade artifacts
 - **Three-phase star system** — staggered radial zoom layers with symmetric smoothstep fade-in/out; any single layer's reset is covered by the other two
-- **HDR output** — opt-in FP16 scRGB-linear surface with feature detection and automatic SDR fallback; highlight cores extend into panel headroom while mid-tones keep the tuned SDR look
+- **HDR output** — opt-in FP16 scRGB-linear surface with feature detection and automatic SDR fallback; highlight cores use display-reported headroom while mid-tones keep the tuned SDR look
 - **GLES 3.0** — required for `sampler3D` / `glTexImage3D`; `highp` precision throughout prevents coordinate overflow artifacts at deep zoom levels
 - **Burn-in safe** — dual-axis coordinate rotation plus continuous inward zoom guarantees no pixel holds a static value; clouds, stars, and flares are all in perpetual motion
 
@@ -86,11 +86,11 @@ mkdir -p "$HOME/Library/Android/sdk"
 
 yes | sdkmanager --sdk_root="$HOME/Library/Android/sdk" \
     "platform-tools" \
-    "platforms;android-23" \
-    "build-tools;30.0.3"
+    "platforms;android-35" \
+    "build-tools;35.0.0"
 ```
 
-Build tools `30.0.3` are known to work because they still include `dx`.
+Build tools `35.0.0` are the default and use `d8`.
 
 ```bash
 ANDROID_HOME="$HOME/Library/Android/sdk"
@@ -100,11 +100,11 @@ ANDROID_HOME="$HOME/Library/Android/sdk"
 You can also point the script at explicit SDK tools:
 
 ```bash
-ANDROID_JAR="$HOME/Library/Android/sdk/platforms/android-23/android.jar" \
-AAPT="$HOME/Library/Android/sdk/build-tools/30.0.3/aapt" \
-DX="$HOME/Library/Android/sdk/build-tools/30.0.3/dx" \
-ZIPALIGN="$HOME/Library/Android/sdk/build-tools/30.0.3/zipalign" \
-APKSIGNER="$HOME/Library/Android/sdk/build-tools/30.0.3/apksigner" \
+ANDROID_JAR="$HOME/Library/Android/sdk/platforms/android-35/android.jar" \
+AAPT="$HOME/Library/Android/sdk/build-tools/35.0.0/aapt" \
+D8="$HOME/Library/Android/sdk/build-tools/35.0.0/d8" \
+ZIPALIGN="$HOME/Library/Android/sdk/build-tools/35.0.0/zipalign" \
+APKSIGNER="$HOME/Library/Android/sdk/build-tools/35.0.0/apksigner" \
 ./build.sh
 ```
 
@@ -140,8 +140,27 @@ adb install --no-incremental Nebula.apk
 ## Compatibility
 
 - Android TV 5.0+ (API 21+), OpenGL ES 3.0
+- Built against Android API 35 by default; compile SDK overrides must be API 29+ because the source uses modern HDR capability constants
 - Tested on NVIDIA Shield 2017 (Tegra X1, Android 11)
 - HDR10 displays: colours are tuned for OLED — deep blacks with saturated violet highlights
+
+## Diagnostics
+
+Nebula requests the highest-resolution display mode at 60 Hz or lower, but Android may still give the app a smaller surface. Logcat lines tagged `NebulaDream` report the requested mode, active mode, app surface size, gas FBO size, HDR capabilities, and adaptive gas scale. If Android has a display-size override such as `wm size 1920x1080`, the app will log that 4K is being limited instead of claiming native 4K rendering.
+
+On some Android TV devices, an exact `wm size 3840x2160` override may be ignored while a near-4K override is accepted. Treat this as a test-only mode: third-party launchers may not scale their icon grids correctly under the global override.
+
+```bash
+adb shell wm size 3839x2160
+adb shell wm density 640
+```
+
+Return to the common 1080p UI override with:
+
+```bash
+adb shell wm size 1920x1080
+adb shell wm density 320
+```
 
 ## License
 

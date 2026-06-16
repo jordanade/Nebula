@@ -12,13 +12,12 @@ import android.preference.PreferenceManager;
  */
 final class Prefs {
 
-    static final String HDR_MODE     = "hdr_mode";      // auto | on | off
+    static final String HDR_MODE     = "hdr_mode";      // auto | off
     static final String RENDER_SCALE = "render_scale";  // 0.50 .. 1.00
     static final String FRAME_CAP    = "frame_cap";     // fps, 0 = uncapped
     static final String ZOOM_SPEED   = "zoom_speed";    // zSpd
 
     static final String HDR_AUTO = "auto";
-    static final String HDR_ON   = "on";
     static final String HDR_OFF  = "off";
 
     private final SharedPreferences sp;

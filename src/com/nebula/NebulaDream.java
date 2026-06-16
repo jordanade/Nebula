@@ -3,10 +3,15 @@ package com.nebula;
 import android.opengl.GLES20;
 import android.opengl.GLES30;
 import android.opengl.GLSurfaceView;
+import android.content.Context;
+import android.os.Build;
 import android.os.SystemClock;
 import android.service.dreams.DreamService;
 import android.util.DisplayMetrics;
 import android.util.Log;
+import android.view.Display;
+import android.view.Window;
+import android.view.WindowManager;
 import javax.microedition.khronos.egl.EGL10;
 import javax.microedition.khronos.egl.EGLConfig;
 import javax.microedition.khronos.egl.EGLDisplay;
@@ -27,6 +32,8 @@ public class NebulaDream extends DreamService {
         setFullscreen(true);
 
         Prefs prefs = Prefs.from(this);
+        DisplayDiagnostics display = DisplayDiagnostics.configure(this);
+        HdrTuning hdrTuning = HdrTuning.from(display.display);
 
         GLSurfaceView sv = new GLSurfaceView(this);
         sv.setEGLContextClientVersion(3); // v4: GLES 3.0 for sampler3D + glTexImage3D
@@ -36,14 +43,221 @@ public class NebulaDream extends DreamService {
         HdrSurface hdr = new HdrSurface(prefs.hdrMode());
         sv.setEGLConfigChooser(hdr);
         sv.setEGLWindowSurfaceFactory(hdr);
-        // v4 split-resolution: the WINDOW stays at native panel resolution so the
-        // composite pass draws pin-sharp stars/spikes; the render-scale pref now
-        // governs only the low-res gas FBO inside the renderer.
+        // Split-resolution: the window uses the best app surface Android grants,
+        // while adaptive render scale governs only the low-res gas FBO.
         sv.setRenderer(new NebulaRenderer(
             prefs.zoomMul(), prefs.frameCapFps(), hdr,
-            prefs.renderScale()));
+            prefs.renderScale(), hdrTuning, display));
         sv.setRenderMode(GLSurfaceView.RENDERMODE_CONTINUOUSLY);
         setContentView(sv);
+    }
+
+    static final class DisplayDiagnostics {
+        final Display display;
+        final String requestedMode;
+        final String appMetrics;
+        final String realMetrics;
+        final String hdrCaps;
+        final int targetWidth;
+        final int targetHeight;
+
+        private DisplayDiagnostics(Display display, String requestedMode, String appMetrics,
+                                   String realMetrics, String hdrCaps, int targetWidth, int targetHeight) {
+            this.display = display;
+            this.requestedMode = requestedMode;
+            this.appMetrics = appMetrics;
+            this.realMetrics = realMetrics;
+            this.hdrCaps = hdrCaps;
+            this.targetWidth = targetWidth;
+            this.targetHeight = targetHeight;
+        }
+
+        static DisplayDiagnostics configure(DreamService service) {
+            Display display = defaultDisplay(service);
+            String appMetrics = metrics(display, false);
+            String realMetrics = metrics(display, true);
+            String hdrCaps = hdrCaps(display);
+            String requested = "none";
+            int targetWidth = 0;
+            int targetHeight = 0;
+
+            if (display != null && Build.VERSION.SDK_INT >= 23) {
+                Display.Mode mode = chooseMode(display.getSupportedModes());
+                if (mode != null) {
+                    requested = modeLabel(mode);
+                    targetWidth = mode.getPhysicalWidth();
+                    targetHeight = mode.getPhysicalHeight();
+                    Window window = service.getWindow();
+                    if (window != null) {
+                        WindowManager.LayoutParams lp = window.getAttributes();
+                        lp.preferredDisplayModeId = mode.getModeId();
+                        window.setAttributes(lp);
+                    }
+                }
+            }
+
+            if (display != null && Build.VERSION.SDK_INT >= 23) {
+                Display.Mode active = display.getMode();
+                if (active != null) {
+                    targetWidth = Math.max(targetWidth, active.getPhysicalWidth());
+                    targetHeight = Math.max(targetHeight, active.getPhysicalHeight());
+                }
+            }
+
+            DisplayDiagnostics diag = new DisplayDiagnostics(
+                display, requested, appMetrics, realMetrics, hdrCaps, targetWidth, targetHeight);
+            Log.i(TAG, "DISPLAY startup requested=" + requested
+                + " active=" + diag.activeMode()
+                + " appMetrics=" + appMetrics
+                + " realMetrics=" + realMetrics
+                + " hdrCaps=" + hdrCaps);
+            return diag;
+        }
+
+        String activeMode() {
+            if (display == null || Build.VERSION.SDK_INT < 23) return "unknown";
+            return modeLabel(display.getMode());
+        }
+
+        String surfaceLimitMessage(int w, int h) {
+            if (display == null || Build.VERSION.SDK_INT < 23) return null;
+            Display.Mode active = display.getMode();
+            int aw = targetWidth;
+            int ah = targetHeight;
+            if (active != null) {
+                aw = Math.max(aw, active.getPhysicalWidth());
+                ah = Math.max(ah, active.getPhysicalHeight());
+            }
+            if (aw <= 0 || ah <= 0) return null;
+            // Some Android TV builds accept 3839x2160 as a near-4K app surface
+            // while rejecting an exact 3840x2160 override. Treat that as 4K.
+            if (w + 1 < aw || h + 1 < ah) {
+                return "App surface " + w + "x" + h + " is below active display mode "
+                    + aw + "x" + ah + "; Android display-size override or system scaling is limiting 4K.";
+            }
+            return null;
+        }
+
+        private static Display defaultDisplay(DreamService service) {
+            WindowManager wm = (WindowManager) service.getSystemService(Context.WINDOW_SERVICE);
+            return wm == null ? null : wm.getDefaultDisplay();
+        }
+
+        private static Display.Mode chooseMode(Display.Mode[] modes) {
+            if (modes == null || modes.length == 0) return null;
+            Display.Mode best = null;
+            for (Display.Mode mode : modes) {
+                if (mode == null || mode.getRefreshRate() > 60.5f) continue;
+                if (best == null || betterMode(mode, best)) best = mode;
+            }
+            if (best != null) return best;
+            for (Display.Mode mode : modes) {
+                if (mode == null) continue;
+                if (best == null || betterMode(mode, best)) best = mode;
+            }
+            return best;
+        }
+
+        private static boolean betterMode(Display.Mode candidate, Display.Mode current) {
+            long ca = (long) candidate.getPhysicalWidth() * candidate.getPhysicalHeight();
+            long cb = (long) current.getPhysicalWidth() * current.getPhysicalHeight();
+            if (ca != cb) return ca > cb;
+            float cf = Math.min(candidate.getRefreshRate(), 60.0f);
+            float bf = Math.min(current.getRefreshRate(), 60.0f);
+            return cf > bf;
+        }
+
+        private static String metrics(Display display, boolean real) {
+            if (display == null) return "unknown";
+            DisplayMetrics dm = new DisplayMetrics();
+            if (real) display.getRealMetrics(dm);
+            else display.getMetrics(dm);
+            return dm.widthPixels + "x" + dm.heightPixels + "@" + dm.densityDpi + "dpi";
+        }
+
+        private static String modeLabel(Display.Mode mode) {
+            if (mode == null) return "none";
+            return mode.getPhysicalWidth() + "x" + mode.getPhysicalHeight()
+                + "@" + String.format("%.2f", mode.getRefreshRate())
+                + "#" + mode.getModeId();
+        }
+
+        private static String hdrCaps(Display display) {
+            if (display == null || Build.VERSION.SDK_INT < 24) return "unknown";
+            Display.HdrCapabilities caps = display.getHdrCapabilities();
+            if (caps == null) return "none";
+            return "types=" + hdrTypes(caps.getSupportedHdrTypes())
+                + " max=" + String.format("%.1f", caps.getDesiredMaxLuminance())
+                + " avg=" + String.format("%.1f", caps.getDesiredMaxAverageLuminance())
+                + " min=" + String.format("%.4f", caps.getDesiredMinLuminance());
+        }
+
+        private static String hdrTypes(int[] types) {
+            if (types == null || types.length == 0) return "[]";
+            StringBuilder out = new StringBuilder("[");
+            for (int i = 0; i < types.length; i++) {
+                if (i > 0) out.append(',');
+                out.append(hdrType(types[i]));
+            }
+            return out.append(']').toString();
+        }
+
+        private static String hdrType(int type) {
+            switch (type) {
+                case Display.HdrCapabilities.HDR_TYPE_DOLBY_VISION: return "DolbyVision";
+                case Display.HdrCapabilities.HDR_TYPE_HDR10: return "HDR10";
+                case Display.HdrCapabilities.HDR_TYPE_HLG: return "HLG";
+                case Display.HdrCapabilities.HDR_TYPE_HDR10_PLUS: return "HDR10+";
+                default: return Integer.toString(type);
+            }
+        }
+    }
+
+    static final class HdrTuning {
+        private static final float SDR_WHITE_NITS = 80.0f;
+        private static final float FALLBACK_HEADROOM = 8.0f;
+        private static final float MIN_HEADROOM = 3.0f;
+        private static final float MAX_HEADROOM = 12.5f;
+
+        final float max;
+        final float knee;
+        final float gain;
+        final float starMax;
+        final float starGain;
+
+        private HdrTuning(float max, float knee, float gain, float starMax, float starGain) {
+            this.max = max;
+            this.knee = knee;
+            this.gain = gain;
+            this.starMax = starMax;
+            this.starGain = starGain;
+        }
+
+        static HdrTuning from(Display display) {
+            float headroom = FALLBACK_HEADROOM;
+            if (display != null && Build.VERSION.SDK_INT >= 24) {
+                Display.HdrCapabilities caps = display.getHdrCapabilities();
+                if (caps != null && caps.getDesiredMaxLuminance() > 0f) {
+                    headroom = caps.getDesiredMaxLuminance() / SDR_WHITE_NITS;
+                }
+            }
+            headroom = clamp(headroom, MIN_HEADROOM, MAX_HEADROOM);
+            float knee = clamp(1.85f + (headroom - 4.0f) * 0.08f, 1.8f, 2.6f);
+            float gain = clamp(4.5f + headroom * 0.9f, 7.0f, 16.0f);
+            float starMax = clamp(headroom + Math.min(2.5f, Math.max(1.25f, headroom * 0.35f)),
+                MIN_HEADROOM, MAX_HEADROOM);
+            float starGain = clamp(gain * 1.35f, 8.5f, 22.0f);
+            Log.i(TAG, "HDR tuning max=" + String.format("%.2f", headroom)
+                + " knee=" + String.format("%.2f", knee)
+                + " gain=" + String.format("%.2f", gain)
+                + " starMax=" + String.format("%.2f", starMax)
+                + " starGain=" + String.format("%.2f", starGain));
+            return new HdrTuning(headroom, knee, gain, starMax, starGain);
+        }
+
+        private static float clamp(float v, float lo, float hi) {
+            return v < lo ? lo : (v > hi ? hi : v);
+        }
     }
 
     /**
@@ -56,8 +270,8 @@ public class NebulaDream extends DreamService {
      * scRGB-linear semantics: output is linear light where 1.0 == ~80 nits
      * (SDR white); values above 1.0 extend into HDR headroom.
      *
-     * Note: "on" and "auto" behave identically here — we can't synthesise HDR
-     * the driver doesn't expose, so both mean "HDR if the extensions exist".
+     * Legacy stored "on" values behave like auto: we can't synthesise HDR the
+     * driver doesn't expose, so anything except "off" means "HDR if available".
      */
     static class HdrSurface
             implements GLSurfaceView.EGLConfigChooser, GLSurfaceView.EGLWindowSurfaceFactory {
@@ -70,7 +284,7 @@ public class NebulaDream extends DreamService {
         private static final int EGL_OPENGL_ES3_BIT_KHR = 0x0040; // v4: request an ES3-capable config
         private static final int EGL_WINDOW_BIT     = 0x0004;
 
-        private final String mode; // auto | on | off
+        private final String mode; // auto | off; legacy on behaves like auto
         volatile boolean hdrActive;
 
         HdrSurface(String mode) { this.mode = mode; }
@@ -395,6 +609,8 @@ public class NebulaDream extends DreamService {
             "uniform float uHdrKnee;\n" +
             "uniform float uHdrGain;\n" +
             "uniform float uHdrMax;\n" +
+            "uniform float uHdrStarGain;\n" +
+            "uniform float uHdrStarMax;\n" +
             "uniform vec4 uStarFlare;\n" +
             "uniform sampler2D uGas;\n" +
             "in vec2 vUv;\n" +
@@ -415,6 +631,19 @@ public class NebulaDream extends DreamService {
             "  if(h<0.8) return vec3(1.00,0.62,0.88);\n" +
             "  return      vec3(0.55,1.00,0.82);\n" +
             "}\n" +
+            "float twinkleComp(){\n" +
+            "  return mix(1.0,2.45,smoothstep(1080.0,2160.0,max(uRes.x,uRes.y)));\n" +
+            "}\n" +
+            "float starTwinkle(vec2 cell,float lid,float mag){\n" +
+            "  float seed=h1(cell+vec2(17.0+lid*13.0,31.0-lid*7.0));\n" +
+            "  float rate=mix(0.45,1.35,h1(cell+5.3+lid*1.7));\n" +
+            "  float ph=6.2831853*(seed+uTime*rate);\n" +
+            "  float wave=sin(ph)*0.5+0.5;\n" +
+            "  float pulse=pow(max(0.0,sin(ph*0.37+seed*11.0)),6.0);\n" +
+            "  float comp=twinkleComp();\n" +
+            "  float amt=mix(0.42,0.18,mag)*comp;\n" +
+            "  return 1.0+amt*(wave-0.5)+pulse*(0.12+0.18*(1.0-mag))*comp;\n" +
+            "}\n" +
             "vec3 starLayer(vec2 uv,float den,float ox,float oy,float ca,float sa,float lid){\n" +
             "  vec2 gp=uv*den+vec2(ox,oy);\n" +
             "  vec2 cell=floor(gp),f=fract(gp);\n" +
@@ -431,18 +660,36 @@ public class NebulaDream extends DreamService {
             "    float fl=isFlare*uStarFlare.z;\n" +
             "    float fl2=fl*fl;\n" +
             "    float bri=mag+fl2*8.0;\n" +
+            "    float tw=starTwinkle(cell,lid,mag);\n" +
+            "    float twDelta=tw-1.0;\n" +
             "    float rad=length(uv-0.5);\n" +
             "    float soft=1.0+rad*rad*16.0+fl2*18.0;\n" +
-            "    float core=exp(-d*d*2500.0/soft)*bri;\n" +
-            "    float halo=exp(-d*d*100.0)*mag*0.15+exp(-d*d*40.0)*fl2*0.6;\n" +
-            "    vec2 sdf=vec2(ca*df.x+sa*df.y,-sa*df.x+ca*df.y);\n" +
-            "    float spTight=32.0/(1.0+fl2*1.0);\n" +
-            "    float spH=exp(-sdf.y*sdf.y*5000.0)*exp(-sdf.x*sdf.x*spTight);\n" +
-            "    float spV=exp(-sdf.x*sdf.x*5000.0)*exp(-sdf.y*sdf.y*spTight);\n" +
-            "    float spike=(spH+spV)*bri*bri*0.34;\n" +
+            "    float coreSoft=soft/max(0.52,1.0+twDelta*1.05);\n" +
+            "    float core=exp(-d*d*2500.0/coreSoft)*bri*(1.0+twDelta*2.10);\n" +
+            "    float halo=exp(-d*d*100.0)*mag*0.15*(0.74+0.26*tw)+exp(-d*d*40.0)*fl2*0.6;\n" +
+            "    float spike=0.0;\n" +
+            "    if(mag>0.50||fl2>0.0001){\n" +
+            "      vec2 sdf=vec2(ca*df.x+sa*df.y,-sa*df.x+ca*df.y);\n" +
+            "      float spTight=32.0/((1.0+fl2*1.0)*max(0.45,1.0+twDelta*1.45));\n" +
+            "      float spH=exp(-sdf.y*sdf.y*5000.0)*exp(-sdf.x*sdf.x*spTight);\n" +
+            "      float spV=exp(-sdf.x*sdf.x*5000.0)*exp(-sdf.y*sdf.y*spTight);\n" +
+            "      spike=(spH+spV)*bri*bri*(0.14+0.32*tw);\n" +
+            "    }\n" +
             "    res+=starCol(h1(cell+9.1))*(core+halo+spike);\n" +
             "  }\n" +
             "  return res;\n" +
+            "}\n" +
+            "vec3 sprinkleLayer(vec2 uv,float den,float ox,float oy){\n" +
+            "  vec2 gp=uv*den+vec2(ox,oy);\n" +
+            "  vec2 cell=floor(gp),f=fract(gp);\n" +
+            "  float h=h1(cell+vec2(41.0,17.0));\n" +
+            "  if(h<0.86) return vec3(0.0);\n" +
+            "  vec2 df=f-h2(cell+23.7);\n" +
+            "  float d2=dot(df,df);\n" +
+            "  float size=mix(900.0,1800.0,h1(cell+29.1));\n" +
+            "  float core=max(0.0,1.0-d2*size);\n" +
+            "  core*=core;\n" +
+            "  return starCol(h1(cell+53.0))*core*0.11;\n" +
             "}\n" +
             "void main(){\n" +
             "  vec4 gas=texture(uGas,vUv);\n" +
@@ -456,41 +703,59 @@ public class NebulaDream extends DreamService {
             "  float SZMAX=0.75;\n" +
             "  float ph=uTime*SZSP;\n" +
             "  float t1=fract(ph+0.000);\n" +
-            "  float t2=fract(ph+0.333);\n" +
-            "  float t3=fract(ph+0.667);\n" +
+            "  float t2=fract(ph+0.500);\n" +
             "  float f1=smoothstep(0.00,0.40,t1)*(1.0-smoothstep(0.60,1.00,t1));\n" +
             "  float f2=smoothstep(0.00,0.40,t2)*(1.0-smoothstep(0.60,1.00,t2));\n" +
-            "  float f3=smoothstep(0.00,0.40,t3)*(1.0-smoothstep(0.60,1.00,t3));\n" +
             "  vec2 sc=vUv-0.5;\n" +
             "  vec2 sr1=vec2(sc.x*0.951-sc.y*0.309, sc.x*0.309+sc.y*0.951);\n" +
             "  vec2 sr2=vec2(sc.x*0.423-sc.y*0.906, sc.x*0.906+sc.y*0.423);\n" +
-            "  vec2 sr3=vec2(-sc.x*0.602-sc.y*0.799, sc.x*0.799-sc.y*0.602);\n" +
             "  vec2 s1=sr1/exp(t1*SZMAX)+0.5;\n" +
             "  vec2 s2=sr2/exp(t2*SZMAX)+0.5;\n" +
-            "  vec2 s3=sr3/exp(t3*SZMAX)+0.5;\n" +
             "  bg+=starLayer(s1,80.0,0.00,0.00,0.951,0.309,0.0)*f1;\n" +
-            "  bg+=starLayer(s2,80.0,0.37,0.21,0.423,0.906,1.0)*f2*0.85;\n" +
-            "  bg+=starLayer(s3,80.0,0.71,0.53,-0.602,0.799,2.0)*f3*0.70;\n" +
+            "  bg+=starLayer(s2,80.0,0.37,0.21,0.423,0.906,1.0)*f2;\n" +
+            "  bg+=sprinkleLayer(sc+0.5,132.0,0.19,0.43)*0.55;\n" +
+            "  vec3 starSig=T*bg;\n" +
             // (deep-space floor moved to the gas pass with the haze)
-            "  col+=T*bg;\n" +
+            "  col+=starSig;\n" +
 
             // ── v3.1 output chain: hue drift, fade-in, desat rolloff, tonemap, HDR ─
             "  float drift=uTime*0.0035;\n" +
-            "  col*=vec3(1.0)+0.10*vec3(sin(drift),sin(drift+2.0944),sin(drift+4.1888));\n" +
-            "  col*=smoothstep(0.0,10.0,uTime);\n" +
+            "  vec3 driftRgb=vec3(1.0)+0.10*vec3(sin(drift),sin(drift+2.0944),sin(drift+4.1888));\n" +
+            "  float fadeIn=smoothstep(0.0,10.0,uTime);\n" +
+            "  col*=driftRgb;\n" +
+            "  starSig*=driftRgb;\n" +
+            "  col*=fadeIn;\n" +
+            "  starSig*=fadeIn;\n" +
             "  float pk=max(max(col.r,col.g),col.b);\n" +
             "  float luma=dot(col,vec3(0.30,0.40,0.30));\n" +
             "  col=mix(col,vec3(luma),smoothstep(1.6,3.4,pk)*0.45);\n" + // keep hue much longer — dense gas columns were rolling to white
             "  vec3 base=col/(col+vec3(0.85));\n" +
             "  base=pow(max(base,vec3(0.0)),vec3(0.92))*1.12;\n" +
+            "  vec3 starBase=starSig/(starSig+vec3(0.85));\n" +
+            "  starBase=pow(max(starBase,vec3(0.0)),vec3(0.92))*1.12;\n" +
             "  float bk=step(1.0/255.0,max(max(base.r,base.g),base.b));\n" +
             "  base*=bk;\n" +
             "  if(uHdr>0.5){\n" +
             "    vec3 lin=pow(base,vec3(2.2));\n" +
+            "    vec3 starLin=pow(max(starBase,vec3(0.0)),vec3(2.2));\n" +
             "    float lum=max(max(col.r,col.g),col.b);\n" +
+            "    float starLum=max(max(starSig.r,starSig.g),starSig.b);\n" +
             "    float hi=max(lum-uHdrKnee,0.0);\n" +
-            "    float boost=uHdrGain*hi/(1.0+(uHdrGain/uHdrMax)*hi);\n" +
-            "    fragColor=vec4(lin+lin*boost,1.0);\n" +
+            "    float boostMax=max(uHdrMax-1.0,1.0);\n" +
+            "    float boost=boostMax*(1.0-exp(-(uHdrGain*hi)/boostMax));\n" +
+            "    vec3 hdr=lin*(1.0+boost);\n" +
+            "    float starHi=max(starLum-uHdrKnee*0.55,0.0);\n" +
+            "    float starBoostMax=max(uHdrStarMax-1.0,1.0);\n" +
+            "    float starBoost=starBoostMax*(1.0-exp(-(uHdrStarGain*starHi)/starBoostMax));\n" +
+            "    float starMask=smoothstep(0.10,0.90,starLum);\n" +
+            "    hdr+=starLin*starMask*starBoost;\n" +
+            "    float hpk=max(max(hdr.r,hdr.g),hdr.b);\n" +
+            "    float peakMax=mix(uHdrMax,uHdrStarMax,starMask);\n" +
+            "    if(hpk>peakMax){\n" +
+            "      float rolled=peakMax-(peakMax-1.0)*exp(-(hpk-1.0)/(peakMax-1.0));\n" +
+            "      hdr*=rolled/max(hpk,1e-4);\n" +
+            "    }\n" +
+            "    fragColor=vec4(max(hdr,vec3(0.0)),1.0);\n" +
             "  } else {\n" +
             "    base+=(h1(gl_FragCoord.xy)-0.5)/255.0*bk;\n" +
             "    fragColor=vec4(clamp(base,0.0,1.0),1.0);\n" +
@@ -500,7 +765,8 @@ public class NebulaDream extends DreamService {
         // Pass 1 (gas, low-res FBO): program + locations
         private int progGas, gAPos, gUTime, gURes, gUNoise, gUZoom;
         // Pass 2 (composite, native res): program + locations
-        private int progComp, cAPos, cUTime, cURes, cUZoom, cUHdr, cUHdrKnee, cUHdrGain, cUHdrMax, cUStarFlare, cUGas;
+        private int progComp, cAPos, cUTime, cURes, cUZoom, cUHdr, cUHdrKnee, cUHdrGain, cUHdrMax,
+            cUHdrStarGain, cUHdrStarMax, cUStarFlare, cUGas;
         private int noiseTex;            // v4: 3D noise texture
         private int gasFbo, gasTex;      // v4: low-res gas render target
         private int gasW, gasH;
@@ -545,25 +811,24 @@ public class NebulaDream extends DreamService {
         private int screenW, screenH;
 
         private final float zoomMul;     // zoom-speed multiplier (1.0 = default)
-        private final float gasScale;    // gas FBO scale relative to the native window
+        private final float gasScaleMax; // user setting; adaptive scaling never exceeds it
+        private float gasScaleActive;    // actual gas FBO scale relative to the app surface
         // Minimum ms between frames. A cap only helps thermals when frame work
         // is below the budget; at high render scales this shader is GPU-bound.
         private final long frameMs;
         private final HdrSurface hdr;
+        private final HdrTuning hdrTuning;
+        private final DisplayDiagnostics display;
 
-        // HDR highlight tuning. Only the linear signal above HDR_KNEE extends
-        // into the headroom (so glow/halos keep their SDR look). HDR_GAIN is the
-        // initial slope; the boost soft-saturates toward HDR_MAX so overlapping
-        // filaments roll off to the panel peak instead of hard-clipping harshly.
-        private static final float HDR_KNEE = 2.4f;  // v4: above gas-column peaks — only star flares/cores extend into headroom
-        private static final float HDR_GAIN = 30.0f;
-        private static final float HDR_MAX  = 30.0f; // high ceiling: cores drive to the panel peak
-
-        NebulaRenderer(float zoomMul, int frameCapFps, HdrSurface hdr, float gasScale) {
+        NebulaRenderer(float zoomMul, int frameCapFps, HdrSurface hdr, float gasScale,
+                       HdrTuning hdrTuning, DisplayDiagnostics display) {
             this.zoomMul = zoomMul;
             this.frameMs = (frameCapFps > 0) ? Math.round(1000.0 / frameCapFps) : 0L;
             this.hdr = hdr;
-            this.gasScale = gasScale;
+            this.gasScaleMax = gasScale;
+            this.gasScaleActive = gasScale;
+            this.hdrTuning = hdrTuning;
+            this.display = display;
         }
 
         @Override
@@ -591,6 +856,8 @@ public class NebulaDream extends DreamService {
             cUHdrKnee= GLES20.glGetUniformLocation(progComp,"uHdrKnee");
             cUHdrGain= GLES20.glGetUniformLocation(progComp,"uHdrGain");
             cUHdrMax = GLES20.glGetUniformLocation(progComp,"uHdrMax");
+            cUHdrStarGain = GLES20.glGetUniformLocation(progComp,"uHdrStarGain");
+            cUHdrStarMax = GLES20.glGetUniformLocation(progComp,"uHdrStarMax");
             cUStarFlare = GLES20.glGetUniformLocation(progComp,"uStarFlare");
             cUGas    = GLES20.glGetUniformLocation(progComp,"uGas");
 
@@ -607,36 +874,10 @@ public class NebulaDream extends DreamService {
             screenW=w; screenH=h;
             GLES20.glViewport(0,0,w,h);
 
-            // (Re)create the low-res gas FBO. RGBA16F (needs EXT_color_buffer_float,
-            // present on the Tegra X1); falls back to RGBA8 if incomplete — gas
-            // highlights then clamp at 1.0, acceptable degradation.
-            if (gasFbo!=0) { GLES20.glDeleteFramebuffers(1,new int[]{gasFbo},0); gasFbo=0; }
-            if (gasTex!=0) { GLES20.glDeleteTextures(1,new int[]{gasTex},0); gasTex=0; }
-            gasW=Math.max(1,Math.round(w*gasScale));
-            gasH=Math.max(1,Math.round(h*gasScale));
-            int[] id=new int[1];
-            GLES20.glGenTextures(1,id,0); gasTex=id[0];
-            GLES20.glBindTexture(GLES20.GL_TEXTURE_2D,gasTex);
-            GLES30.glTexImage2D(GLES20.GL_TEXTURE_2D,0,GLES30.GL_RGBA16F,gasW,gasH,0,
-                GLES20.GL_RGBA,GLES30.GL_HALF_FLOAT,null);
-            GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D,GLES20.GL_TEXTURE_MIN_FILTER,GLES20.GL_LINEAR);
-            GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D,GLES20.GL_TEXTURE_MAG_FILTER,GLES20.GL_LINEAR);
-            GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D,GLES20.GL_TEXTURE_WRAP_S,GLES20.GL_CLAMP_TO_EDGE);
-            GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D,GLES20.GL_TEXTURE_WRAP_T,GLES20.GL_CLAMP_TO_EDGE);
-            GLES20.glGenFramebuffers(1,id,0); gasFbo=id[0];
-            GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER,gasFbo);
-            GLES20.glFramebufferTexture2D(GLES20.GL_FRAMEBUFFER,GLES20.GL_COLOR_ATTACHMENT0,
-                GLES20.GL_TEXTURE_2D,gasTex,0);
-            if (GLES20.glCheckFramebufferStatus(GLES20.GL_FRAMEBUFFER)!=GLES20.GL_FRAMEBUFFER_COMPLETE) {
-                Log.w(TAG,"RGBA16F gas FBO incomplete; falling back to RGBA8.");
-                GLES20.glBindTexture(GLES20.GL_TEXTURE_2D,gasTex);
-                GLES20.glTexImage2D(GLES20.GL_TEXTURE_2D,0,GLES20.GL_RGBA,gasW,gasH,0,
-                    GLES20.GL_RGBA,GLES20.GL_UNSIGNED_BYTE,null);
-                if (GLES20.glCheckFramebufferStatus(GLES20.GL_FRAMEBUFFER)!=GLES20.GL_FRAMEBUFFER_COMPLETE)
-                    throw new RuntimeException("Gas FBO incomplete even with RGBA8.");
-            }
-            GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER,0);
-            Log.i(TAG,"Gas FBO "+gasW+"x"+gasH+" (window "+w+"x"+h+")");
+            gasScaleActive = initialGasScale(w, h);
+            recreateGasTarget();
+            String limit = (display == null) ? null : display.surfaceLimitMessage(w, h);
+            if (limit != null) Log.w(TAG, limit);
         }
 
         @Override
@@ -656,7 +897,14 @@ public class NebulaDream extends DreamService {
                 float workMs = (workSamples > 0) ? workAccNs/(float)workSamples/1e6f : 0f;
                 Log.i(TAG,"SPIKE cadence="+String.format("%.1f",fpsN*1000f/(lastDrawMs-fpsT0))
                     +"fps gpuWork="+String.format("%.1f",workMs)
-                    +"ms res="+screenW+"x"+screenH+" hdr="+(hdr!=null&&hdr.hdrActive));
+                    +"ms surface="+screenW+"x"+screenH
+                    +" gas="+gasW+"x"+gasH
+                    +" gasScale="+String.format("%.2f",gasScaleActive)
+                    +" hdr="+(hdr!=null&&hdr.hdrActive)
+                    +" activeMode="+((display==null)?"unknown":display.activeMode())
+                    +" requestedMode="+((display==null)?"none":display.requestedMode)
+                    +" hdrCaps="+((display==null)?"unknown":display.hdrCaps));
+                if (SystemClock.elapsedRealtime() - startMs > 6000) adaptGasScale(workMs);
                 fpsN=0; fpsT0=lastDrawMs; workAccNs=0; workSamples=0;
             }
             boolean sampleWork = (fpsN % 20) == 0;
@@ -687,9 +935,11 @@ public class NebulaDream extends DreamService {
             GLES20.glUniform2f(cURes,(float)screenW,(float)screenH);
             GLES20.glUniform1f(cUZoom,zoomMul);
             GLES20.glUniform1f(cUHdr,(hdr!=null && hdr.hdrActive)?1f:0f);
-            GLES20.glUniform1f(cUHdrKnee,HDR_KNEE);
-            GLES20.glUniform1f(cUHdrGain,HDR_GAIN);
-            GLES20.glUniform1f(cUHdrMax,HDR_MAX);
+            GLES20.glUniform1f(cUHdrKnee,hdrTuning.knee);
+            GLES20.glUniform1f(cUHdrGain,hdrTuning.gain);
+            GLES20.glUniform1f(cUHdrMax,hdrTuning.max);
+            GLES20.glUniform1f(cUHdrStarGain,hdrTuning.starGain);
+            GLES20.glUniform1f(cUHdrStarMax,hdrTuning.starMax);
             if (t >= sfNext) {
                 float r = sfRng.nextFloat();
                 sfMag = r * r;
@@ -698,9 +948,9 @@ public class NebulaDream extends DreamService {
                 float szsp = 0.0120f * zoomMul;
                 float sph = t * szsp;
                 float bestF = -1f;
-                float[][] layerOff = {{0f,0f},{0.37f,0.21f},{0.71f,0.53f}};
-                float[] phOff = {0f, 0.333f, 0.667f};
-                for (int i = 0; i < 3; i++) {
+                float[][] layerOff = {{0f,0f},{0.37f,0.21f}};
+                float[] phOff = {0f, 0.5f};
+                for (int i = 0; i < 2; i++) {
                     float ti = sph + phOff[i];
                     ti = ti - (float)Math.floor(ti);
                     float fi = Math.max(0f, Math.min(1f, (ti - 0f) / 0.40f))
@@ -736,6 +986,70 @@ public class NebulaDream extends DreamService {
                 workAccNs += System.nanoTime()-drawStartNs;
                 workSamples++;
             }
+        }
+
+        private float initialGasScale(int w, int h) {
+            float basePixels = 1920f * 1080f;
+            float windowPixels = Math.max(1f, (float) w * (float) h);
+            float thermalScale = (float) Math.sqrt(basePixels / windowPixels);
+            return clamp(gasScaleMax * Math.min(1f, thermalScale), 0.10f, gasScaleMax);
+        }
+
+        private void adaptGasScale(float workMs) {
+            if (frameMs <= 0 || workMs <= 0f || screenW <= 0 || screenH <= 0) return;
+            float budget = frameMs * 0.88f;
+            float next = gasScaleActive;
+            if (workMs > budget && gasScaleActive > 0.101f) {
+                float factor = (float) Math.sqrt(Math.max(0.25f, budget / workMs)) * 0.96f;
+                next = gasScaleActive * factor;
+            } else if (workMs < frameMs * 0.58f && gasScaleActive < gasScaleMax - 0.005f) {
+                next = gasScaleActive * 1.06f;
+            }
+            next = clamp(next, 0.10f, gasScaleMax);
+            if (Math.abs(next - gasScaleActive) >= 0.01f) {
+                gasScaleActive = next;
+                recreateGasTarget();
+                Log.i(TAG,"Adaptive gas scale now "+String.format("%.2f",gasScaleActive)
+                    +" for "+gasW+"x"+gasH+" targetFps="+String.format("%.1f",1000f/frameMs));
+            }
+        }
+
+        private void recreateGasTarget() {
+            // RGBA16F preserves HDR gas highlights; RGBA8 fallback is a safe
+            // degradation for drivers without renderable half-float textures.
+            if (gasFbo!=0) { GLES20.glDeleteFramebuffers(1,new int[]{gasFbo},0); gasFbo=0; }
+            if (gasTex!=0) { GLES20.glDeleteTextures(1,new int[]{gasTex},0); gasTex=0; }
+            gasW=Math.max(1,Math.round(screenW*gasScaleActive));
+            gasH=Math.max(1,Math.round(screenH*gasScaleActive));
+            int[] id=new int[1];
+            GLES20.glGenTextures(1,id,0); gasTex=id[0];
+            GLES20.glBindTexture(GLES20.GL_TEXTURE_2D,gasTex);
+            GLES30.glTexImage2D(GLES20.GL_TEXTURE_2D,0,GLES30.GL_RGBA16F,gasW,gasH,0,
+                GLES20.GL_RGBA,GLES30.GL_HALF_FLOAT,null);
+            GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D,GLES20.GL_TEXTURE_MIN_FILTER,GLES20.GL_LINEAR);
+            GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D,GLES20.GL_TEXTURE_MAG_FILTER,GLES20.GL_LINEAR);
+            GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D,GLES20.GL_TEXTURE_WRAP_S,GLES20.GL_CLAMP_TO_EDGE);
+            GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D,GLES20.GL_TEXTURE_WRAP_T,GLES20.GL_CLAMP_TO_EDGE);
+            GLES20.glGenFramebuffers(1,id,0); gasFbo=id[0];
+            GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER,gasFbo);
+            GLES20.glFramebufferTexture2D(GLES20.GL_FRAMEBUFFER,GLES20.GL_COLOR_ATTACHMENT0,
+                GLES20.GL_TEXTURE_2D,gasTex,0);
+            if (GLES20.glCheckFramebufferStatus(GLES20.GL_FRAMEBUFFER)!=GLES20.GL_FRAMEBUFFER_COMPLETE) {
+                Log.w(TAG,"RGBA16F gas FBO incomplete; falling back to RGBA8.");
+                GLES20.glBindTexture(GLES20.GL_TEXTURE_2D,gasTex);
+                GLES20.glTexImage2D(GLES20.GL_TEXTURE_2D,0,GLES20.GL_RGBA,gasW,gasH,0,
+                    GLES20.GL_RGBA,GLES20.GL_UNSIGNED_BYTE,null);
+                if (GLES20.glCheckFramebufferStatus(GLES20.GL_FRAMEBUFFER)!=GLES20.GL_FRAMEBUFFER_COMPLETE)
+                    throw new RuntimeException("Gas FBO incomplete even with RGBA8.");
+            }
+            GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER,0);
+            Log.i(TAG,"Gas FBO "+gasW+"x"+gasH+" (surface "+screenW+"x"+screenH
+                +", scale "+String.format("%.2f",gasScaleActive)
+                +", userMax "+String.format("%.2f",gasScaleMax)+")");
+        }
+
+        private static float clamp(float v, float lo, float hi) {
+            return v < lo ? lo : (v > hi ? hi : v);
         }
 
         private int buildProg(String vs,String fs){

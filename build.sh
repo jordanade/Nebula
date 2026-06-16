@@ -4,8 +4,8 @@ set -eu
 root_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 cd "$root_dir"
 
-api_level="${API_LEVEL:-23}"
-build_tools_version="${BUILD_TOOLS_VERSION:-30.0.3}"
+api_level="${API_LEVEL:-35}"
+build_tools_version="${BUILD_TOOLS_VERSION:-35.0.0}"
 out_apk="${OUT_APK:-Nebula.apk}"
 obj_dir=obj
 bin_dir=bin
@@ -30,6 +30,7 @@ fi
 
 AAPT="${AAPT:-$BUILD_TOOLS/aapt}"
 DX="${DX:-$BUILD_TOOLS/dx}"
+D8="${D8:-$BUILD_TOOLS/d8}"
 ZIPALIGN="${ZIPALIGN:-$BUILD_TOOLS/zipalign}"
 APKSIGNER="${APKSIGNER:-$BUILD_TOOLS/apksigner}"
 
@@ -49,7 +50,9 @@ requireExec() {
 
 requireFile "$ANDROID_JAR" ANDROID_JAR
 requireExec "$AAPT" AAPT
-requireExec "$DX" DX
+if [ ! -x "$DX" ]; then
+    requireExec "$D8" D8
+fi
 requireExec "$ZIPALIGN" ZIPALIGN
 
 gen_dir=gen
@@ -70,7 +73,12 @@ find src "$gen_dir" -name '*.java' 2>/dev/null > "$bin_dir/sources.txt"
 "$javac_bin" -encoding UTF-8 -source 8 -target 8 -bootclasspath "$ANDROID_JAR" \
     -d "$obj_dir" @"$bin_dir/sources.txt"
 
-"$DX" --dex --output="$bin_dir/classes.dex" "$obj_dir/"
+if [ -x "$DX" ]; then
+    "$DX" --dex --output="$bin_dir/classes.dex" "$obj_dir/"
+else
+    find "$obj_dir" -name '*.class' > "$bin_dir/classes-d8.txt"
+    "$D8" --min-api 21 --lib "$ANDROID_JAR" --output "$bin_dir" @"$bin_dir/classes-d8.txt"
+fi
 
 # shellcheck disable=SC2086
 "$AAPT" package -f -F "$bin_dir/nebula.unaligned.apk" \
