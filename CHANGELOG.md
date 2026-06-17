@@ -2,6 +2,31 @@
 
 All notable changes to Nebula are documented here.
 
+## 4.4 — 2026-06-17
+
+A star-field quality and performance pass on the v4 volumetric renderer. Star
+clusters read more like real galaxy photos, sprinkle stars gain colour variety,
+and GPU micro-optimisations free ~4 ms of headroom per frame at 1080p.
+
+### Changed
+- **Sharper star cluster/void contrast** — density noise tightened to a narrow
+  smoothstep with squared falloff and an early-out hash check before the noise
+  lookup, producing clearer sparse voids and dense clusters.
+- **Coloured sprinkle stars** — sprinkles now sample `starCol()` with an
+  independent hash, giving colour variety instead of monochrome white.
+- **Wider sprinkle coverage** — a base density floor ensures sprinkles appear
+  everywhere, not only in the densest regions.
+- **Brighter galaxy haze** — haze multiplier boosted 6× for a visible diffuse
+  background glow behind star clusters.
+- **Uniform star brightness** — removed the density-scaled brightness
+  attenuation so stars in sparse regions are no longer dimmed.
+- **Leaner star shader** — twinkle pulse term removed (saves 1 `sin` + 1 `pow`
+  per star), `dot(d,d)` replaces `length()` (saves `sqrt`), cube multiply
+  replaces `pow(h,3)`, halo `exp()` merged so the flare-only term fires only
+  during flares, and spike threshold raised from 0.50 to 0.65.
+- **Steady 25 fps at 1080p** with ~4 ms of per-frame headroom gained from the
+  shader simplifications above.
+
 ## 4.3 — 2026-06-17
 
 A star-field refinement and uniqueness pass on the v4 volumetric renderer. Each

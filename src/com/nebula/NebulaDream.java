@@ -408,7 +408,7 @@ public class NebulaDream extends DreamService {
             "  float r=max(gdn-0.55,0.0)/0.45;\n" +
             "  float glow=exp(-2.5/(r+0.001))*step(0.001,r);\n" +
             "  vec3 gcol=mix(vec3(0.40,0.42,0.62),vec3(1.0,0.92,0.80),glow);\n" +
-            "  return gcol*glow*glow*0.035;\n" +
+            "  return gcol*glow*glow*0.22;\n" +
             "}\n" +
             "float rm(float v,float l,float h){ return clamp((v-l)/(h-l),0.0,1.0); }\n" +
                         // ── Phase 3: density from the precomputed 3D noise TEXTURE (uniform, no
@@ -641,46 +641,47 @@ public class NebulaDream extends DreamService {
             "  float rate=mix(0.20,0.65,h1(cell+5.3+lid*1.7));\n" +
             "  float ph=6.2831853*(seed+uTime*rate);\n" +
             "  float wave=sin(ph)*0.5+0.5;\n" +
-            "  float pulse=pow(max(0.0,sin(ph*0.37+seed*11.0)),6.0);\n" +
             "  float comp=twinkleComp();\n" +
             "  float amt=mix(0.42,0.18,mag)*comp;\n" +
-            "  return 1.0+amt*(wave-0.5)+pulse*(0.12+0.18*(1.0-mag))*comp;\n" +
+            "  return 1.0+amt*(wave-0.5);\n" +
             "}\n" +
             "vec3 starLayer(vec2 uv,float den,float ox,float oy,float ca,float sa,float lid){\n" +
             "  vec2 gp=uv*den+vec2(ox,oy);\n" +
             "  vec2 cell=floor(gp),f=fract(gp);\n" +
-            "  float dn=vn(cell*0.012+vec2(ox*0.1,oy*0.1))*0.75+vn(cell*0.04+11.0)*0.25;\n" +
-            "  float dens=smoothstep(0.35,0.65,dn);\n" +
-            "  dens*=dens;\n" +
-            "  float thresh=0.99-dens*0.72;\n" +
-            "  vec3 res=vec3(0.0);\n" +
             "  float h=h1(cell);\n" +
-            "  if(h>thresh){\n" +
-            "    vec2 df=f-h2(cell+3.7);\n" +
-            "    float d=length(df);\n" +
-            "    float mag=(0.18+0.82*pow(h1(cell+7.7),3.0))*mix(0.6,1.0,dens);\n" +
-            "    float isFlare=step(abs(lid-uStarFlare.w),0.5)*(1.0-step(0.5,length(cell-vec2(uStarFlare.x,uStarFlare.y))));\n" +
-            "    float fl=isFlare*uStarFlare.z;\n" +
-            "    float fl2=fl*fl;\n" +
-            "    float bri=mag+fl2*8.0;\n" +
-            "    float tw=starTwinkle(cell,lid,mag);\n" +
-            "    float twDelta=tw-1.0;\n" +
-            "    float rad=length(uv-0.5);\n" +
-            "    float soft=1.0+rad*rad*16.0+fl2*18.0;\n" +
-            "    float coreSoft=soft/max(0.52,1.0+twDelta*1.05);\n" +
-            "    float core=exp(-d*d*2500.0/coreSoft)*bri*(1.0+twDelta*2.10);\n" +
-            "    float halo=exp(-d*d*100.0)*mag*0.15*(0.74+0.26*tw)+exp(-d*d*40.0)*fl2*0.6;\n" +
-            "    float spike=0.0;\n" +
-            "    if(mag>0.50||fl2>0.0001){\n" +
-            "      vec2 sdf=vec2(ca*df.x+sa*df.y,-sa*df.x+ca*df.y);\n" +
-            "      float spTight=32.0/((1.0+fl2*1.0)*max(0.45,1.0+twDelta*1.45));\n" +
-            "      float spH=exp(-sdf.y*sdf.y*5000.0)*exp(-sdf.x*sdf.x*spTight);\n" +
-            "      float spV=exp(-sdf.x*sdf.x*5000.0)*exp(-sdf.y*sdf.y*spTight);\n" +
-            "      spike=(spH+spV)*bri*bri*(0.14+0.32*tw);\n" +
-            "    }\n" +
-            "    res+=starCol(h1(cell+9.1))*(core+halo+spike);\n" +
+            "  if(h<0.38) return vec3(0.0);\n" +  // absolute floor: 0.94-0.56=0.38
+
+            "  float dn=vn(cell*0.012+vec2(ox*0.1,oy*0.1))*0.62+vn(cell*0.05+11.0)*0.38;\n" +
+            "  float dens=smoothstep(0.38,0.58,dn);\n" +
+            "  dens*=dens;\n" +
+            "  float thresh=0.92-dens*0.54;\n" +
+            "  if(h<thresh) return vec3(0.0);\n" +
+            "  vec2 df=f-h2(cell+3.7);\n" +
+            "  float d2=dot(df,df);\n" +
+            "  float hm=h1(cell+7.7); float mag=0.18+0.82*hm*hm*hm;\n" +
+            "  vec2 fc=cell-vec2(uStarFlare.x,uStarFlare.y); float isFlare=step(abs(lid-uStarFlare.w),0.5)*(1.0-step(0.25,dot(fc,fc)));\n" +
+            "  float fl=isFlare*uStarFlare.z;\n" +
+            "  float fl2=fl*fl;\n" +
+            "  float bri=mag+fl2*8.0;\n" +
+            "  float tw=starTwinkle(cell,lid,mag);\n" +
+            "  float twDelta=tw-1.0;\n" +
+            "  vec2 ruv=uv-0.5;\n" +
+            "  float rad2=dot(ruv,ruv);\n" +
+            "  float soft=1.0+rad2*16.0+fl2*18.0;\n" +
+            "  float coreSoft=soft/max(0.52,1.0+twDelta*1.05);\n" +
+            "  float core=exp(-d2*2500.0/coreSoft)*bri*(1.0+twDelta*2.10);\n" +
+            "  float eh=exp(-d2*100.0);\n" +
+            "  float halo=eh*mag*0.15*(0.74+0.26*tw);\n" +
+            "  if(fl2>0.0001) halo+=exp(-d2*40.0)*fl2*0.6;\n" +
+            "  float spike=0.0;\n" +
+            "  if(mag>0.65||fl2>0.0001){\n" +
+            "    vec2 sdf=vec2(ca*df.x+sa*df.y,-sa*df.x+ca*df.y);\n" +
+            "    float spTight=32.0/((1.0+fl2*1.0)*max(0.45,1.0+twDelta*1.45));\n" +
+            "    float spH=exp(-sdf.y*sdf.y*5000.0)*exp(-sdf.x*sdf.x*spTight);\n" +
+            "    float spV=exp(-sdf.x*sdf.x*5000.0)*exp(-sdf.y*sdf.y*spTight);\n" +
+            "    spike=(spH+spV)*bri*bri*(0.14+0.32*tw);\n" +
             "  }\n" +
-            "  return res;\n" +
+            "  return starCol(h1(cell+9.1))*(core+halo+spike);\n" +
             "}\n" +
             "vec3 sprinkleLayer(vec2 uv,float den,float ox,float oy,float dens){\n" +
             "  float thresh=0.97-dens*0.97;\n" +
@@ -692,7 +693,9 @@ public class NebulaDream extends DreamService {
             "  float d2=dot(df,df);\n" +
             "  float core=max(0.0,1.0-d2*1200.0);\n" +
             "  core*=core;\n" +
-            "  return vec3(core*0.30);\n" +
+            "  float b=core*0.30;\n" +
+            "  vec3 sc=starCol(h1(cell+9.3));\n" +
+            "  return sc*b;\n" +
             "}\n" +
             "void main(){\n" +
             "  vec4 gas=texture(uGas,vUv);\n" +
@@ -717,9 +720,8 @@ public class NebulaDream extends DreamService {
             "  bg+=starLayer(s1,80.0,0.00,0.00,0.951,0.309,0.0)*f1;\n" +
             "  bg+=starLayer(s2,80.0,0.37,0.21,0.423,0.906,1.0)*f2;\n" +
             "  float spDn=vn(vUv*1.6+uSeed+vec2(0.019,0.043))*0.65+vn(vUv*5.0+uSeed*3.0+7.3)*0.35;\n" +
-            "  float spDens=smoothstep(0.55,0.68,spDn);\n" +
-            "  spDens*=spDens;\n" +
-            "  bg+=sprinkleLayer(sc+0.5,800.0,0.19,0.43,spDens)*0.75;\n" +
+            "  float spDens=0.08+0.92*smoothstep(0.25,0.65,spDn);\n" +
+            "  bg+=sprinkleLayer(sc+0.5,800.0,0.19,0.43,spDens);\n" +
             "  vec3 starSig=T*bg;\n" +
             // (deep-space floor moved to the gas pass with the haze)
             "  col+=starSig;\n" +
