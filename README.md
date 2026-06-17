@@ -26,7 +26,8 @@ https://github.com/user-attachments/assets/64694f09-465d-44a0-8d85-9e21705ab982
 - **Spatial dither** — breaks far-field 8-bit texture banding; fades out for near gas where dense sampling already hides quantisation
 - **Galaxy haze + HDR flares** — dense star clusters glow as hazy distant galaxies coincident with the star layer; the brightest stars throw small, aperiodic HDR flashes with four-point diffraction spikes and slower special-flare envelopes
 - **Scale-space fractal zoom** — rotation applied after scaling ensures `pB(t=1) = pA(t=0)` exactly at every octave boundary; new detail continuously elaborates on visible structure with no position jumps, resets, or crossfade artifacts
-- **Three-phase star system** — staggered radial zoom layers with symmetric smoothstep fade-in/out; any single layer's reset is covered by the other two
+- **Two-phase star system** — staggered radial zoom layers with symmetric smoothstep fade-in/out; each layer's reset is covered by the other
+- **Per-session random seed** — each screensaver activation randomises the camera path, nebula formation, and star field so no two sessions look alike
 - **HDR output** — opt-in FP16 scRGB-linear surface with feature detection and automatic SDR fallback; highlight cores use display-reported headroom while mid-tones keep the tuned SDR look
 - **GLES 3.0** — required for `sampler3D` / `glTexImage3D`; `highp` precision throughout prevents coordinate overflow artifacts at deep zoom levels
 - **Burn-in safe** — dual-axis coordinate rotation plus continuous inward zoom guarantees no pixel holds a static value; clouds, stars, and flares are all in perpetual motion

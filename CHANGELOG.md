@@ -2,6 +2,41 @@
 
 All notable changes to Nebula are documented here.
 
+## 4.3 — 2026-06-17
+
+A star-field refinement and uniqueness pass on the v4 volumetric renderer. Each
+screensaver session now produces a unique nebula and star field.
+
+### Added
+- **Per-session random seed** — each screensaver activation generates a unique
+  nebula formation, camera path, and star field so no two sessions look alike.
+- **Density-driven sprinkle layer** — a pointillistic sub-pixel star layer that
+  clusters in star-dense regions, reinforcing the galaxy-cluster effect.
+- **Performance measurement guide** — `docs/measuring-performance.md` documents
+  how to measure GPU performance on the Shield, since standard Android
+  frame-stats tooling does not work with GLSurfaceView rendering.
+
+### Changed
+- **Non-periodic camera motion** — lateral drift now uses dual incommensurate
+  sine waves per axis, eliminating the visible periodic loop from previous
+  versions.
+- **More dramatic star density variation** — coarser density noise with squared
+  falloff creates clear sparse voids and dense clusters instead of uniform
+  distribution.
+- **Density-scaled star brightness** — stars in sparse regions render at 60%
+  brightness, reinforcing the cluster/void contrast.
+- **Reduced 1080p twinkle intensity** — twinkle amplitude scales with resolution
+  so lower-resolution displays don't oversaturate.
+- **Slower star twinkle rate** — twinkle frequencies halved for a calmer star
+  field.
+- **Brighter, properly scheduled flares** — flare magnitude uses a square-root
+  distribution for more visible accents; each flare fully fades before the next
+  one triggers, eliminating mid-envelope cutoffs.
+
+### Fixed
+- Corrected README claim of three-phase star system (has been two-phase since
+  v4.0).
+
 ## 4.2 — 2026-06-15
 
 A performance and controls release for the v4 volumetric renderer. The main
