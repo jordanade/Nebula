@@ -3,19 +3,10 @@ package com.nebula;
 import android.opengl.GLES20;
 import android.opengl.GLES30;
 import android.opengl.GLSurfaceView;
-import android.content.Context;
-import android.os.Build;
 import android.os.SystemClock;
 import android.service.dreams.DreamService;
-import android.util.DisplayMetrics;
 import android.util.Log;
-import android.view.Display;
-import android.view.Window;
-import android.view.WindowManager;
-import javax.microedition.khronos.egl.EGL10;
 import javax.microedition.khronos.egl.EGLConfig;
-import javax.microedition.khronos.egl.EGLDisplay;
-import javax.microedition.khronos.egl.EGLSurface;
 import javax.microedition.khronos.opengles.GL10;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
@@ -52,317 +43,106 @@ public class NebulaDream extends DreamService {
         setContentView(sv);
     }
 
-    static final class DisplayDiagnostics {
-        final Display display;
-        final String requestedMode;
-        final String appMetrics;
-        final String realMetrics;
-        final String hdrCaps;
-        final int targetWidth;
-        final int targetHeight;
-
-        private DisplayDiagnostics(Display display, String requestedMode, String appMetrics,
-                                   String realMetrics, String hdrCaps, int targetWidth, int targetHeight) {
-            this.display = display;
-            this.requestedMode = requestedMode;
-            this.appMetrics = appMetrics;
-            this.realMetrics = realMetrics;
-            this.hdrCaps = hdrCaps;
-            this.targetWidth = targetWidth;
-            this.targetHeight = targetHeight;
-        }
-
-        static DisplayDiagnostics configure(DreamService service) {
-            Display display = defaultDisplay(service);
-            String appMetrics = metrics(display, false);
-            String realMetrics = metrics(display, true);
-            String hdrCaps = hdrCaps(display);
-            String requested = "none";
-            int targetWidth = 0;
-            int targetHeight = 0;
-
-            if (display != null && Build.VERSION.SDK_INT >= 23) {
-                Display.Mode mode = chooseMode(display.getSupportedModes());
-                if (mode != null) {
-                    requested = modeLabel(mode);
-                    targetWidth = mode.getPhysicalWidth();
-                    targetHeight = mode.getPhysicalHeight();
-                    Window window = service.getWindow();
-                    if (window != null) {
-                        WindowManager.LayoutParams lp = window.getAttributes();
-                        lp.preferredDisplayModeId = mode.getModeId();
-                        window.setAttributes(lp);
-                    }
-                }
-            }
-
-            if (display != null && Build.VERSION.SDK_INT >= 23) {
-                Display.Mode active = display.getMode();
-                if (active != null) {
-                    targetWidth = Math.max(targetWidth, active.getPhysicalWidth());
-                    targetHeight = Math.max(targetHeight, active.getPhysicalHeight());
-                }
-            }
-
-            DisplayDiagnostics diag = new DisplayDiagnostics(
-                display, requested, appMetrics, realMetrics, hdrCaps, targetWidth, targetHeight);
-            Log.i(TAG, "DISPLAY startup requested=" + requested
-                + " active=" + diag.activeMode()
-                + " appMetrics=" + appMetrics
-                + " realMetrics=" + realMetrics
-                + " hdrCaps=" + hdrCaps);
-            return diag;
-        }
-
-        String activeMode() {
-            if (display == null || Build.VERSION.SDK_INT < 23) return "unknown";
-            return modeLabel(display.getMode());
-        }
-
-        String surfaceLimitMessage(int w, int h) {
-            if (display == null || Build.VERSION.SDK_INT < 23) return null;
-            Display.Mode active = display.getMode();
-            int aw = targetWidth;
-            int ah = targetHeight;
-            if (active != null) {
-                aw = Math.max(aw, active.getPhysicalWidth());
-                ah = Math.max(ah, active.getPhysicalHeight());
-            }
-            if (aw <= 0 || ah <= 0) return null;
-            // Some Android TV builds accept 3839x2160 as a near-4K app surface
-            // while rejecting an exact 3840x2160 override. Treat that as 4K.
-            if (w + 1 < aw || h + 1 < ah) {
-                return "App surface " + w + "x" + h + " is below active display mode "
-                    + aw + "x" + ah + "; Android display-size override or system scaling is limiting 4K.";
-            }
-            return null;
-        }
-
-        private static Display defaultDisplay(DreamService service) {
-            WindowManager wm = (WindowManager) service.getSystemService(Context.WINDOW_SERVICE);
-            return wm == null ? null : wm.getDefaultDisplay();
-        }
-
-        private static Display.Mode chooseMode(Display.Mode[] modes) {
-            if (modes == null || modes.length == 0) return null;
-            Display.Mode best = null;
-            for (Display.Mode mode : modes) {
-                if (mode == null || mode.getRefreshRate() > 60.5f) continue;
-                if (best == null || betterMode(mode, best)) best = mode;
-            }
-            if (best != null) return best;
-            for (Display.Mode mode : modes) {
-                if (mode == null) continue;
-                if (best == null || betterMode(mode, best)) best = mode;
-            }
-            return best;
-        }
-
-        private static boolean betterMode(Display.Mode candidate, Display.Mode current) {
-            long ca = (long) candidate.getPhysicalWidth() * candidate.getPhysicalHeight();
-            long cb = (long) current.getPhysicalWidth() * current.getPhysicalHeight();
-            if (ca != cb) return ca > cb;
-            float cf = Math.min(candidate.getRefreshRate(), 60.0f);
-            float bf = Math.min(current.getRefreshRate(), 60.0f);
-            return cf > bf;
-        }
-
-        private static String metrics(Display display, boolean real) {
-            if (display == null) return "unknown";
-            DisplayMetrics dm = new DisplayMetrics();
-            if (real) display.getRealMetrics(dm);
-            else display.getMetrics(dm);
-            return dm.widthPixels + "x" + dm.heightPixels + "@" + dm.densityDpi + "dpi";
-        }
-
-        private static String modeLabel(Display.Mode mode) {
-            if (mode == null) return "none";
-            return mode.getPhysicalWidth() + "x" + mode.getPhysicalHeight()
-                + "@" + String.format("%.2f", mode.getRefreshRate())
-                + "#" + mode.getModeId();
-        }
-
-        private static String hdrCaps(Display display) {
-            if (display == null || Build.VERSION.SDK_INT < 24) return "unknown";
-            Display.HdrCapabilities caps = display.getHdrCapabilities();
-            if (caps == null) return "none";
-            return "types=" + hdrTypes(caps.getSupportedHdrTypes())
-                + " max=" + String.format("%.1f", caps.getDesiredMaxLuminance())
-                + " avg=" + String.format("%.1f", caps.getDesiredMaxAverageLuminance())
-                + " min=" + String.format("%.4f", caps.getDesiredMinLuminance());
-        }
-
-        private static String hdrTypes(int[] types) {
-            if (types == null || types.length == 0) return "[]";
-            StringBuilder out = new StringBuilder("[");
-            for (int i = 0; i < types.length; i++) {
-                if (i > 0) out.append(',');
-                out.append(hdrType(types[i]));
-            }
-            return out.append(']').toString();
-        }
-
-        private static String hdrType(int type) {
-            switch (type) {
-                case Display.HdrCapabilities.HDR_TYPE_DOLBY_VISION: return "DolbyVision";
-                case Display.HdrCapabilities.HDR_TYPE_HDR10: return "HDR10";
-                case Display.HdrCapabilities.HDR_TYPE_HLG: return "HLG";
-                case Display.HdrCapabilities.HDR_TYPE_HDR10_PLUS: return "HDR10+";
-                default: return Integer.toString(type);
-            }
-        }
-    }
-
-    static final class HdrTuning {
-        private static final float SDR_WHITE_NITS = 80.0f;
-        private static final float FALLBACK_HEADROOM = 8.0f;
-        private static final float MIN_HEADROOM = 3.0f;
-        private static final float MAX_HEADROOM = 12.5f;
-
-        final float max;
-        final float knee;
-        final float gain;
-        final float starMax;
-        final float starGain;
-
-        private HdrTuning(float max, float knee, float gain, float starMax, float starGain) {
-            this.max = max;
-            this.knee = knee;
-            this.gain = gain;
-            this.starMax = starMax;
-            this.starGain = starGain;
-        }
-
-        static HdrTuning from(Display display) {
-            float headroom = FALLBACK_HEADROOM;
-            if (display != null && Build.VERSION.SDK_INT >= 24) {
-                Display.HdrCapabilities caps = display.getHdrCapabilities();
-                if (caps != null && caps.getDesiredMaxLuminance() > 0f) {
-                    headroom = caps.getDesiredMaxLuminance() / SDR_WHITE_NITS;
-                }
-            }
-            headroom = clamp(headroom, MIN_HEADROOM, MAX_HEADROOM);
-            float knee = clamp(1.85f + (headroom - 4.0f) * 0.08f, 1.8f, 2.6f);
-            float gain = clamp(4.5f + headroom * 0.9f, 7.0f, 16.0f);
-            float starMax = clamp(headroom + Math.min(2.5f, Math.max(1.25f, headroom * 0.35f)),
-                MIN_HEADROOM, MAX_HEADROOM);
-            float starGain = clamp(gain * 1.35f, 8.5f, 22.0f);
-            Log.i(TAG, "HDR tuning max=" + String.format("%.2f", headroom)
-                + " knee=" + String.format("%.2f", knee)
-                + " gain=" + String.format("%.2f", gain)
-                + " starMax=" + String.format("%.2f", starMax)
-                + " starGain=" + String.format("%.2f", starGain));
-            return new HdrTuning(headroom, knee, gain, starMax, starGain);
-        }
-
-        private static float clamp(float v, float lo, float hi) {
-            return v < lo ? lo : (v > hi ? hi : v);
-        }
-    }
-
-    /**
-     * Chooses the EGL config and creates the window surface, opting into an
-     * HDR (FP16 + scRGB-linear extended-range) surface when the driver
-     * advertises the required extensions and HDR isn't disabled. Otherwise it
-     * transparently falls back to a standard 8-bit SDR surface, so the dream
-     * never black-screens on hardware that can't do GPU HDR.
-     *
-     * scRGB-linear semantics: output is linear light where 1.0 == ~80 nits
-     * (SDR white); values above 1.0 extend into HDR headroom.
-     *
-     * Legacy stored "on" values behave like auto: we can't synthesise HDR the
-     * driver doesn't expose, so anything except "off" means "HDR if available".
-     */
-    static class HdrSurface
-            implements GLSurfaceView.EGLConfigChooser, GLSurfaceView.EGLWindowSurfaceFactory {
-
-        // EGL extension enums (not in EGL10).
-        private static final int EGL_GL_COLORSPACE_KHR             = 0x309D;
-        private static final int EGL_GL_COLORSPACE_SCRGB_LINEAR_EXT = 0x3350;
-        private static final int EGL_COLOR_COMPONENT_TYPE_EXT       = 0x3339;
-        private static final int EGL_COLOR_COMPONENT_TYPE_FLOAT_EXT = 0x333B;
-        private static final int EGL_OPENGL_ES3_BIT_KHR = 0x0040; // v4: request an ES3-capable config
-        private static final int EGL_WINDOW_BIT     = 0x0004;
-
-        private final String mode; // auto | off; legacy on behaves like auto
-        volatile boolean hdrActive;
-
-        HdrSurface(String mode) { this.mode = mode; }
-
-        @Override
-        public EGLConfig chooseConfig(EGL10 egl, EGLDisplay display) {
-            String exts = egl.eglQueryString(display, EGL10.EGL_EXTENSIONS);
-            boolean wantHdr = !Prefs.HDR_OFF.equals(mode);
-            boolean canHdr = wantHdr && exts != null
-                && exts.contains("EGL_EXT_pixel_format_float")
-                && exts.contains("EGL_EXT_gl_colorspace_scrgb_linear");
-
-            if (canHdr) {
-                EGLConfig c = pick(egl, display, new int[] {
-                    EGL10.EGL_RENDERABLE_TYPE, EGL_OPENGL_ES3_BIT_KHR,
-                    EGL10.EGL_SURFACE_TYPE, EGL_WINDOW_BIT,
-                    EGL_COLOR_COMPONENT_TYPE_EXT, EGL_COLOR_COMPONENT_TYPE_FLOAT_EXT,
-                    EGL10.EGL_RED_SIZE, 16, EGL10.EGL_GREEN_SIZE, 16,
-                    EGL10.EGL_BLUE_SIZE, 16, EGL10.EGL_ALPHA_SIZE, 16,
-                    EGL10.EGL_NONE
-                });
-                if (c != null) {
-                    hdrActive = true;
-                    Log.i(TAG, "HDR surface selected (FP16 + scRGB-linear).");
-                    return c;
-                }
-                Log.w(TAG, "HDR requested but no FP16 config; falling back to SDR.");
-            }
-
-            hdrActive = false;
-            EGLConfig c = pick(egl, display, new int[] {
-                EGL10.EGL_RENDERABLE_TYPE, EGL_OPENGL_ES3_BIT_KHR,
-                EGL10.EGL_SURFACE_TYPE, EGL_WINDOW_BIT,
-                EGL10.EGL_RED_SIZE, 8, EGL10.EGL_GREEN_SIZE, 8,
-                EGL10.EGL_BLUE_SIZE, 8, EGL10.EGL_ALPHA_SIZE, 8,
-                EGL10.EGL_NONE
-            });
-            if (c == null) throw new RuntimeException("No suitable EGL config (SDR fallback failed).");
-            return c;
-        }
-
-        private static EGLConfig pick(EGL10 egl, EGLDisplay display, int[] attribs) {
-            int[] num = new int[1];
-            if (!egl.eglChooseConfig(display, attribs, null, 0, num) || num[0] <= 0) return null;
-            EGLConfig[] cfgs = new EGLConfig[num[0]];
-            if (!egl.eglChooseConfig(display, attribs, cfgs, num[0], num)) return null;
-            return cfgs[0];
-        }
-
-        @Override
-        public EGLSurface createWindowSurface(EGL10 egl, EGLDisplay display,
-                                              EGLConfig config, Object nativeWindow) {
-            if (hdrActive) {
-                try {
-                    EGLSurface s = egl.eglCreateWindowSurface(display, config, nativeWindow,
-                        new int[] { EGL_GL_COLORSPACE_KHR, EGL_GL_COLORSPACE_SCRGB_LINEAR_EXT,
-                                    EGL10.EGL_NONE });
-                    if (s != null && s != EGL10.EGL_NO_SURFACE) return s;
-                } catch (IllegalArgumentException e) {
-                    Log.w(TAG, "scRGB surface failed; using default colorspace.", e);
-                }
-                hdrActive = false; // colorspace didn't take — treat as SDR output
-            }
-            return egl.eglCreateWindowSurface(display, config, nativeWindow, null);
-        }
-
-        @Override
-        public void destroySurface(EGL10 egl, EGLDisplay display, EGLSurface surface) {
-            egl.eglDestroySurface(display, surface);
-        }
-    }
-
     static class NebulaRenderer implements GLSurfaceView.Renderer {
 
         private static final float[] QUAD = {
             -1f,-1f,  1f,-1f,  -1f,1f,
              1f,-1f,  1f, 1f,  -1f,1f
         };
+
+        // ── Tweakable constants ─────────────────────────────────────────
+        // Changing a value here updates the GPU shader AND CPU flare
+        // scheduler in lock-step — no manual sync needed.
+
+        // Star density distribution
+        private static final float SD_FREQ_LO  = 0.028f;
+        private static final float SD_FREQ_HI  = 0.05f;
+        private static final float SD_W_LO     = 0.55f;
+        private static final float SD_W_HI     = 0.45f;
+        private static final float SD_SS_LO    = 0.38f;
+        private static final float SD_SS_HI    = 0.58f;
+        private static final float STAR_FLOOR  = 0.38f;
+        private static final float STAR_CEIL   = 0.92f;
+        private static final float STAR_RANGE  = 0.54f;
+
+        // Star grid and zoom
+        private static final float STAR_DEN    = 80.0f;
+        private static final float SZ_SPEED    = 0.0120f;
+        private static final float SZ_MAX      = 0.75f;
+        private static final float L0_OX = 0.0f,  L0_OY = 0.0f;
+        private static final float L1_OX = 0.37f, L1_OY = 0.21f;
+        private static final float L0_PHASE = 0.0f, L1_PHASE = 0.5f;
+
+        // Sprinkle stars
+        private static final float SP_DEN      = 800.0f;
+        private static final float SP_CORE     = 1200.0f;
+        private static final float SP_BRI      = 0.30f;
+        private static final float SP_BASE     = 0.08f;
+        private static final float SP_SS_LO    = 0.25f;
+        private static final float SP_SS_HI    = 0.65f;
+
+        // Galaxy haze
+        private static final float HAZE_MUL    = 0.22f;
+
+        // Star rendering
+        private static final float SPIKE_THRESH = 0.65f;
+
+        // Flare scheduling
+        private static final float FLARE_DUR_MIN = 1.5f;
+        private static final float FLARE_DUR_RNG = 2.0f;
+        private static final float FLARE_GAP_MIN = 0.1f;
+        private static final float FLARE_GAP_RNG = 0.5f;
+
+        // Layer offsets for Java (matches shader L0/L1 constants)
+        private static final float[][] LAYER_OFF = {
+            {L0_OX, L0_OY}, {L1_OX, L1_OY}
+        };
+        private static final float[] LAYER_PHASE = {L0_PHASE, L1_PHASE};
+
+        // GLSL #define blocks — injected after #version so shader code uses
+        // named constants instead of magic numbers.
+        private static final String GAS_DEFS =
+            "#define SZ_SPEED "  + SZ_SPEED  + "\n" +
+            "#define SZ_MAX "    + SZ_MAX    + "\n" +
+            "#define STAR_DEN "  + STAR_DEN  + "\n" +
+            "#define L0_OX "     + L0_OX     + "\n" +
+            "#define L0_OY "     + L0_OY     + "\n" +
+            "#define L1_OX "     + L1_OX     + "\n" +
+            "#define L1_OY "     + L1_OY     + "\n" +
+            "#define HAZE_MUL "  + HAZE_MUL  + "\n" +
+            "#define SD_FREQ_LO " + SD_FREQ_LO + "\n" +
+            "#define SD_FREQ_HI " + SD_FREQ_HI + "\n" +
+            "#define SD_W_LO "    + SD_W_LO    + "\n" +
+            "#define SD_W_HI "    + SD_W_HI    + "\n" +
+            "#define SD_SS_LO "   + SD_SS_LO   + "\n" +
+            "#define SD_SS_HI "   + SD_SS_HI   + "\n";
+
+        private static final String COMP_DEFS =
+            "#define SD_FREQ_LO "  + SD_FREQ_LO  + "\n" +
+            "#define SD_FREQ_HI "  + SD_FREQ_HI  + "\n" +
+            "#define SD_W_LO "     + SD_W_LO     + "\n" +
+            "#define SD_W_HI "     + SD_W_HI     + "\n" +
+            "#define SD_SS_LO "    + SD_SS_LO    + "\n" +
+            "#define SD_SS_HI "    + SD_SS_HI    + "\n" +
+            "#define STAR_FLOOR "  + STAR_FLOOR  + "\n" +
+            "#define STAR_CEIL "   + STAR_CEIL   + "\n" +
+            "#define STAR_RANGE "  + STAR_RANGE  + "\n" +
+            "#define STAR_DEN "    + STAR_DEN    + "\n" +
+            "#define SZ_SPEED "    + SZ_SPEED    + "\n" +
+            "#define SZ_MAX "      + SZ_MAX      + "\n" +
+            "#define L0_OX "       + L0_OX       + "\n" +
+            "#define L0_OY "       + L0_OY       + "\n" +
+            "#define L1_OX "       + L1_OX       + "\n" +
+            "#define L1_OY "       + L1_OY       + "\n" +
+            "#define L0_PHASE "    + L0_PHASE    + "\n" +
+            "#define L1_PHASE "    + L1_PHASE    + "\n" +
+            "#define SP_DEN "      + SP_DEN      + "\n" +
+            "#define SP_CORE "     + SP_CORE     + "\n" +
+            "#define SP_BRI "      + SP_BRI      + "\n" +
+            "#define SP_BASE "     + SP_BASE     + "\n" +
+            "#define SP_SS_LO "    + SP_SS_LO    + "\n" +
+            "#define SP_SS_HI "    + SP_SS_HI    + "\n" +
+            "#define SPIKE_THRESH " + SPIKE_THRESH + "\n";
 
         private static final String VERT_ES3 =
             "#version 300 es\n" +
@@ -383,6 +163,7 @@ public class NebulaDream extends DreamService {
         // so the full-res composite pass can place stars BEHIND the gas. ────────
         private static final String FRAG_GAS =
             "#version 300 es\n" +
+            GAS_DEFS +
             "precision highp float;\n" +
             "precision highp sampler3D;\n" +
             "uniform float uTime;\n" +
@@ -404,49 +185,49 @@ public class NebulaDream extends DreamService {
             "}\n" +
             "vec3 hazeLayer(vec2 uv,float den,float ox,float oy){\n" +
             "  vec2 gp=uv*den+vec2(ox,oy);\n" +
-            "  float gdn=vn(gp*0.02+vec2(ox*0.1,oy*0.1))*0.55+vn(gp*0.055+11.0)*0.30+vn(gp*0.13+5.0)*0.15;\n" +
-            "  float r=max(gdn-0.55,0.0)/0.45;\n" +
+            "  float gdn=vn(gp*SD_FREQ_LO+vec2(ox*0.1,oy*0.1))*SD_W_LO+vn(gp*SD_FREQ_HI+11.0)*SD_W_HI;\n" +
+            "  float r=smoothstep(SD_SS_LO,SD_SS_HI,gdn); r*=r;\n" +
             "  float glow=exp(-2.5/(r+0.001))*step(0.001,r);\n" +
             "  vec3 gcol=mix(vec3(0.40,0.42,0.62),vec3(1.0,0.92,0.80),glow);\n" +
-            "  return gcol*glow*glow*0.22;\n" +
+            "  return gcol*glow*glow*HAZE_MUL;\n" +
             "}\n" +
             "float rm(float v,float l,float h){ return clamp((v-l)/(h-l),0.0,1.0); }\n" +
                         // ── Phase 3: density from the precomputed 3D noise TEXTURE (uniform, no
             // analytic noise / branching) — R=value fbm, G=inverted Worley billow. ──
             "float dens(vec3 p){\n" +
-            "  float base=texture(uNoise,p*0.075).r;\n" +             // larger billow base
+            "  float base=texture(uNoise,p*0.062).r;\n" +             // larger billow base
             // Coverage: low-frequency gate makes fewer, larger cloud masses while
             // still rejecting the weakest saddles between them.
-            "  float cov=smoothstep(0.39,0.68,texture(uNoise,p*0.027+0.31).r);\n" +
+            "  float cov=smoothstep(0.26,0.68,texture(uNoise,p*0.022+0.31).r);\n" +
             "  float d=rm(base,1.0-cov,1.0)*cov;\n" +
             "  float ero=texture(uNoise,p*0.22).g;\n" +              // broad Worley erosion
-            "  d=rm(d,ero*0.24,1.0);\n" +
-            "  float ero2=texture(uNoise,p*0.58).g;\n" +             // restrained fine erosion; avoids clumpy breakup
-            "  d=rm(d,ero2*0.26,1.0);\n" +
-            "  return pow(d,2.45);\n" +                              // fuller interiors for larger readable masses
+            "  d=rm(d,ero*0.20,1.0);\n" +
+            "  float ero2=texture(uNoise,p*0.58).g;\n" +             // fine erosion for detailed edges
+            "  d=rm(d,ero2*0.22,1.0);\n" +
+            "  return pow(d,1.8);\n" +                              // fuller interiors for larger readable masses
             "}\n" +
             // Mid-distance density (3 fetches): keeps the coarse Worley erosion
             // for readable cloud edges but drops the fine ero2 term (p*0.58) whose
             // sub-pixel detail aliases into shimmer at this range.
             "float densMid(vec3 p){\n" +
-            "  float base=texture(uNoise,p*0.075).r;\n" +
-            "  float cov=smoothstep(0.39,0.68,texture(uNoise,p*0.027+0.31).r);\n" +
+            "  float base=texture(uNoise,p*0.062).r;\n" +
+            "  float cov=smoothstep(0.26,0.68,texture(uNoise,p*0.022+0.31).r);\n" +
             "  float d=rm(base,1.0-cov,1.0)*cov;\n" +
             "  float ero=texture(uNoise,p*0.22).g;\n" +
-            "  d=rm(d,ero*0.24,1.0);\n" +
+            "  d=rm(d,ero*0.20,1.0);\n" +
             "  d=rm(d,0.20,1.0);\n" +                                // approximate the fine erosion's average
-            "  return pow(d,2.45)*0.95;\n" +
+            "  return pow(d,1.8)*0.95;\n" +
             "}\n" +
             // Cheap far-field density (2 low-freq fetches, no erosion detail): used
             // beyond the detail horizon where cauliflower edges are sub-pixel anyway.
             // Low-freq coords are also cache-friendly — big strides were thrashing
             // the texture cache with the full 4-fetch dens().
             "float densFar(vec3 p){\n" +
-            "  float base=texture(uNoise,p*0.075).r;\n" +
-            "  float cov=smoothstep(0.39,0.68,texture(uNoise,p*0.027+0.31).r);\n" +
+            "  float base=texture(uNoise,p*0.062).r;\n" +
+            "  float cov=smoothstep(0.26,0.68,texture(uNoise,p*0.022+0.31).r);\n" +
             "  float d=rm(base,1.0-cov,1.0)*cov;\n" +
             "  d=rm(d,0.18,1.0);\n" +                                // approximate the erosion's average bite
-            "  return pow(d,2.45)*0.9;\n" +
+            "  return pow(d,1.8)*0.9;\n" +
             "}\n" +
             // ── Phase 2: HG phase (silver lining) + powder + violet ambient + palette ─
             "float hg(float c,float g){ float g2=g*g; return (1.0-g2)/pow(max(1.0+g2-2.0*g*c,1e-3),1.5); }\n" +
@@ -526,7 +307,7 @@ public class NebulaDream extends DreamService {
             "        emit+=mix(tcol,vec3(1.0,0.62,0.92),0.35)*rim*1.15*nearAmt;\n" +
             "        float frontGrain=0.42+0.82*frontDetail;\n" +
             "        float shell=smoothstep(0.018,0.10,d)*(1.0-smoothstep(0.22,0.48,d));\n" +
-            "        emit+=mix(tcol,vec3(1.0,0.48,0.90),0.48)*frontHalo*(d*0.20+shell*0.68)*frontGrain*1.16*nearAmt;\n" +
+            "        emit+=mix(tcol,vec3(1.0,0.48,0.90),0.30)*frontHalo*(d*0.20+shell*0.68)*frontGrain*0.35*nearAmt;\n" +
             "      }\n" +
             // Distance falloff: deep gas contributes progressively less, so the
             // mid/rear stack reads as faint depth, not an accumulated bright wall.
@@ -549,39 +330,39 @@ public class NebulaDream extends DreamService {
             // Galaxy haze + deep-space floor BEHIND the gas (same three-phase star
             // zoom as the comp pass, so haze and stars move as one entity).
             "  vec3 hz=vec3(0.0);\n" +
-            "  float hzSP=0.0120*uZoom;\n" +
+            "  float hzSP=SZ_SPEED*uZoom;\n" +
             "  float hzPh=uTime*hzSP;\n" +
             "  float t1=fract(hzPh+0.000);\n" +
             "  float t2=fract(hzPh+0.333);\n" +
             "  float t3=fract(hzPh+0.667);\n" +
-            "  float f1=smoothstep(0.00,0.40,t1)*(1.0-smoothstep(0.60,1.00,t1));\n" +
-            "  float f2=smoothstep(0.00,0.40,t2)*(1.0-smoothstep(0.60,1.00,t2));\n" +
-            "  float f3=smoothstep(0.00,0.40,t3)*(1.0-smoothstep(0.60,1.00,t3));\n" +
-            "  vec2 sc=vUv-0.5;\n" +
+            "  float f1=smoothstep(0.10,0.30,t1)*(1.0-smoothstep(0.70,0.90,t1));\n" +
+            "  float f2=smoothstep(0.10,0.30,t2)*(1.0-smoothstep(0.70,0.90,t2));\n" +
+            "  float f3=smoothstep(0.10,0.30,t3)*(1.0-smoothstep(0.70,0.90,t3));\n" +
+            "  vec2 sc=vUv-0.5; sc.y*=uRes.y/uRes.x;\n" +
             "  vec2 sr1=vec2(sc.x*0.951-sc.y*0.309, sc.x*0.309+sc.y*0.951);\n" +
             "  vec2 sr2=vec2(sc.x*0.423-sc.y*0.906, sc.x*0.906+sc.y*0.423);\n" +
             "  vec2 sr3=vec2(-sc.x*0.602-sc.y*0.799, sc.x*0.799-sc.y*0.602);\n" +
-            "  hz+=hazeLayer(sr1/exp(t1*0.75)+0.5,80.0,0.00,0.00)*f1;\n" +
-            "  hz+=hazeLayer(sr2/exp(t2*0.75)+0.5,80.0,0.37,0.21)*f2*0.85;\n" +
-            "  hz+=hazeLayer(sr3/exp(t3*0.75)+0.5,80.0,0.71,0.53)*f3*0.70;\n" +
+            "  hz+=hazeLayer(sr1/exp(t1*SZ_MAX)+0.5+uSeed,STAR_DEN,L0_OX,L0_OY)*f1;\n" +
+            "  hz+=hazeLayer(sr2/exp(t2*SZ_MAX)+0.5+uSeed,STAR_DEN,L1_OX,L1_OY)*f2*0.85;\n" +
+            "  hz+=hazeLayer(sr3/exp(t3*SZ_MAX)+0.5+uSeed,STAR_DEN,0.71,0.53)*f3*0.70;\n" +
             "  hz+=vec3(0.0);\n" +
             "  vec3 pFar=ro+rd*55.0;\n" +
-            "  float farBase=texture(uNoise,pFar*0.075).r;\n" +
-            "  float farCov=smoothstep(0.39,0.68,texture(uNoise,pFar*0.027+0.31).r);\n" +
+            "  float farBase=texture(uNoise,pFar*0.062).r;\n" +
+            "  float farCov=smoothstep(0.26,0.68,texture(uNoise,pFar*0.022+0.31).r);\n" +
             "  float farD=rm(farBase,1.0-farCov,1.0)*farCov;\n" +
             "  float farEro=texture(uNoise,pFar*0.22).g;\n" +
             "  farD=rm(farD,farEro*0.24,1.0);\n" +
             "  farD=pow(farD,2.0);\n" +
             "  vec3 pFar2=ro+rd*72.0;\n" +
-            "  float farBase2=texture(uNoise,pFar2*0.075).r;\n" +
-            "  float farCov2=smoothstep(0.39,0.68,texture(uNoise,pFar2*0.027+0.31).r);\n" +
+            "  float farBase2=texture(uNoise,pFar2*0.062).r;\n" +
+            "  float farCov2=smoothstep(0.26,0.68,texture(uNoise,pFar2*0.022+0.31).r);\n" +
             "  float farD2=rm(farBase2,1.0-farCov2,1.0)*farCov2;\n" +
             "  float farEro2=texture(uNoise,pFar2*0.22).g;\n" +
             "  farD2=rm(farD2,farEro2*0.24,1.0);\n" +
             "  farD2=pow(farD2,2.0);\n" +
             "  vec3 pFar3=ro+rd*95.0;\n" +
-            "  float farBase3=texture(uNoise,pFar3*0.075).r;\n" +
-            "  float farCov3=smoothstep(0.39,0.68,texture(uNoise,pFar3*0.027+0.31).r);\n" +
+            "  float farBase3=texture(uNoise,pFar3*0.062).r;\n" +
+            "  float farCov3=smoothstep(0.26,0.68,texture(uNoise,pFar3*0.022+0.31).r);\n" +
             "  float farD3=rm(farBase3,1.0-farCov3,1.0)*farCov3;\n" +
             "  float farEro3=texture(uNoise,pFar3*0.22).g;\n" +
             "  farD3=rm(farD3,farEro3*0.24,1.0);\n" +
@@ -602,6 +383,7 @@ public class NebulaDream extends DreamService {
         // the v3.1 output chain (hue drift, fade, desat, tonemap, HDR). ──────
         private static final String FRAG_COMP =
             "#version 300 es\n" +
+            COMP_DEFS +
             "precision highp float;\n" +
             "uniform float uTime;\n" +
             "uniform vec2  uRes;\n" +
@@ -633,12 +415,10 @@ public class NebulaDream extends DreamService {
             "  if(h<0.8) return vec3(1.00,0.62,0.88);\n" +
             "  return      vec3(0.55,1.00,0.82);\n" +
             "}\n" +
-            "float twinkleComp(){\n" +
-            "  return mix(0.1375,2.45,smoothstep(1080.0,2160.0,max(uRes.x,uRes.y)));\n" +
-            "}\n" +
+            "float twinkleComp(){ return 1.0; }\n" +
             "float starTwinkle(vec2 cell,float lid,float mag){\n" +
             "  float seed=h1(cell+vec2(17.0+lid*13.0,31.0-lid*7.0));\n" +
-            "  float rate=mix(0.20,0.65,h1(cell+5.3+lid*1.7));\n" +
+            "  float rate=mix(0.12,0.35,h1(cell+5.3+lid*1.7));\n" +
             "  float ph=6.2831853*(seed+uTime*rate);\n" +
             "  float wave=sin(ph)*0.5+0.5;\n" +
             "  float comp=twinkleComp();\n" +
@@ -649,12 +429,11 @@ public class NebulaDream extends DreamService {
             "  vec2 gp=uv*den+vec2(ox,oy);\n" +
             "  vec2 cell=floor(gp),f=fract(gp);\n" +
             "  float h=h1(cell);\n" +
-            "  if(h<0.38) return vec3(0.0);\n" +  // absolute floor: 0.94-0.56=0.38
-
-            "  float dn=vn(cell*0.012+vec2(ox*0.1,oy*0.1))*0.62+vn(cell*0.05+11.0)*0.38;\n" +
-            "  float dens=smoothstep(0.38,0.58,dn);\n" +
+            "  if(h<STAR_FLOOR) return vec3(0.0);\n" +
+            "  float dn=vn(cell*SD_FREQ_LO+vec2(ox*0.1,oy*0.1))*SD_W_LO+vn(cell*SD_FREQ_HI+11.0)*SD_W_HI;\n" +
+            "  float dens=smoothstep(SD_SS_LO,SD_SS_HI,dn);\n" +
             "  dens*=dens;\n" +
-            "  float thresh=0.92-dens*0.54;\n" +
+            "  float thresh=STAR_CEIL-dens*STAR_RANGE;\n" +
             "  if(h<thresh) return vec3(0.0);\n" +
             "  vec2 df=f-h2(cell+3.7);\n" +
             "  float d2=dot(df,df);\n" +
@@ -665,18 +444,16 @@ public class NebulaDream extends DreamService {
             "  float bri=mag+fl2*8.0;\n" +
             "  float tw=starTwinkle(cell,lid,mag);\n" +
             "  float twDelta=tw-1.0;\n" +
-            "  vec2 ruv=uv-0.5;\n" +
-            "  float rad2=dot(ruv,ruv);\n" +
-            "  float soft=1.0+rad2*16.0+fl2*18.0;\n" +
-            "  float coreSoft=soft/max(0.52,1.0+twDelta*1.05);\n" +
-            "  float core=exp(-d2*2500.0/coreSoft)*bri*(1.0+twDelta*2.10);\n" +
+            "  float soft=1.0+fl2*18.0;\n" +
+            "  float coreSoft=soft/max(0.52,1.0+twDelta*0.60);\n" +
+            "  float core=exp(-d2*2500.0/coreSoft)*bri*(1.0+twDelta*1.20);\n" +
             "  float eh=exp(-d2*100.0);\n" +
             "  float halo=eh*mag*0.15*(0.74+0.26*tw);\n" +
             "  if(fl2>0.0001) halo+=exp(-d2*40.0)*fl2*0.6;\n" +
             "  float spike=0.0;\n" +
-            "  if(mag>0.65||fl2>0.0001){\n" +
+            "  if(mag>SPIKE_THRESH||fl2>0.0001){\n" +
             "    vec2 sdf=vec2(ca*df.x+sa*df.y,-sa*df.x+ca*df.y);\n" +
-            "    float spTight=32.0/((1.0+fl2*1.0)*max(0.45,1.0+twDelta*1.45));\n" +
+            "    float spTight=32.0/((1.0+fl2*1.0)*max(0.45,1.0+twDelta*0.80));\n" +
             "    float spH=exp(-sdf.y*sdf.y*5000.0)*exp(-sdf.x*sdf.x*spTight);\n" +
             "    float spV=exp(-sdf.x*sdf.x*5000.0)*exp(-sdf.y*sdf.y*spTight);\n" +
             "    spike=(spH+spV)*bri*bri*(0.14+0.32*tw);\n" +
@@ -691,9 +468,9 @@ public class NebulaDream extends DreamService {
             "  if(h<thresh) return vec3(0.0);\n" +
             "  vec2 df=f-h2(cell+23.7);\n" +
             "  float d2=dot(df,df);\n" +
-            "  float core=max(0.0,1.0-d2*1200.0);\n" +
+            "  float core=max(0.0,1.0-d2*SP_CORE);\n" +
             "  core*=core;\n" +
-            "  float b=core*0.30;\n" +
+            "  float b=core*SP_BRI;\n" +
             "  vec3 sc=starCol(h1(cell+9.3));\n" +
             "  return sc*b;\n" +
             "}\n" +
@@ -705,23 +482,28 @@ public class NebulaDream extends DreamService {
             // star system), weighted by the ray's remaining transmittance T so
             // dense masses occlude them and they shine through voids/thin gas. ──
             "  vec3 bg=vec3(0.0);\n" +
-            "  float SZSP=0.0120*uZoom;\n" +
-            "  float SZMAX=0.75;\n" +
+            "  float SZSP=SZ_SPEED*uZoom;\n" +
             "  float ph=uTime*SZSP;\n" +
-            "  float t1=fract(ph+0.000);\n" +
-            "  float t2=fract(ph+0.500);\n" +
-            "  float f1=smoothstep(0.00,0.40,t1)*(1.0-smoothstep(0.60,1.00,t1));\n" +
-            "  float f2=smoothstep(0.00,0.40,t2)*(1.0-smoothstep(0.60,1.00,t2));\n" +
-            "  vec2 sc=vUv-0.5;\n" +
+            "  float t1=fract(ph+L0_PHASE);\n" +
+            "  float t2=fract(ph+L1_PHASE);\n" +
+            "  float f1=smoothstep(0.10,0.30,t1)*(1.0-smoothstep(0.70,0.90,t1));\n" +
+            "  float f2=smoothstep(0.10,0.30,t2)*(1.0-smoothstep(0.70,0.90,t2));\n" +
+            "  vec2 sc=vUv-0.5; sc.y*=uRes.y/uRes.x;\n" +
             "  vec2 sr1=vec2(sc.x*0.951-sc.y*0.309, sc.x*0.309+sc.y*0.951);\n" +
             "  vec2 sr2=vec2(sc.x*0.423-sc.y*0.906, sc.x*0.906+sc.y*0.423);\n" +
-            "  vec2 s1=sr1/exp(t1*SZMAX)+0.5+uSeed;\n" +
-            "  vec2 s2=sr2/exp(t2*SZMAX)+0.5+uSeed;\n" +
-            "  bg+=starLayer(s1,80.0,0.00,0.00,0.951,0.309,0.0)*f1;\n" +
-            "  bg+=starLayer(s2,80.0,0.37,0.21,0.423,0.906,1.0)*f2;\n" +
-            "  float spDn=vn(vUv*1.6+uSeed+vec2(0.019,0.043))*0.65+vn(vUv*5.0+uSeed*3.0+7.3)*0.35;\n" +
-            "  float spDens=0.08+0.92*smoothstep(0.25,0.65,spDn);\n" +
-            "  bg+=sprinkleLayer(sc+0.5,800.0,0.19,0.43,spDens);\n" +
+            "  vec2 s1=sr1/exp(t1*SZ_MAX)+0.5+uSeed;\n" +
+            "  vec2 s2=sr2/exp(t2*SZ_MAX)+0.5+uSeed;\n" +
+            "  bg+=starLayer(s1,STAR_DEN,L0_OX,L0_OY,0.951,0.309,0.0)*f1;\n" +
+            "  bg+=starLayer(s2,STAR_DEN,L1_OX,L1_OY,0.423,0.906,1.0)*f2;\n" +
+            "  vec2 sdUv=(f1>=f2)?s1:s2;\n" +
+            "  float sdOx=(f1>=f2)?L0_OX:L1_OX; float sdOy=(f1>=f2)?L0_OY:L1_OY;\n" +
+            "  vec2 sdGp=sdUv*STAR_DEN+vec2(sdOx,sdOy);\n" +
+            "  float sdField=vn(sdGp*SD_FREQ_LO+vec2(sdOx*0.1,sdOy*0.1))*SD_W_LO+vn(sdGp*SD_FREQ_HI+11.0)*SD_W_HI;\n" +
+            "  float sdD=smoothstep(SD_SS_LO,SD_SS_HI,sdField); sdD*=sdD;\n" +
+            "  vec2 scUv=sc+0.5;\n" +
+            "  float spDn=vn(scUv*3.2+uSeed*2.0+vec2(5.7,3.1))*0.55+vn(scUv*8.5+uSeed*4.0+17.3)*0.45;\n" +
+            "  float spDens=(SP_BASE+(1.0-SP_BASE)*smoothstep(SP_SS_LO,SP_SS_HI,spDn))*(1.0+sdD);\n" +
+            "  bg+=sprinkleLayer(scUv,SP_DEN,0.19,0.43,spDens);\n" +
             "  vec3 starSig=T*bg;\n" +
             // (deep-space floor moved to the gas pass with the haze)
             "  col+=starSig;\n" +
@@ -736,7 +518,7 @@ public class NebulaDream extends DreamService {
             "  starSig*=fadeIn;\n" +
             "  float pk=max(max(col.r,col.g),col.b);\n" +
             "  float luma=dot(col,vec3(0.30,0.40,0.30));\n" +
-            "  col=mix(col,vec3(luma),smoothstep(1.6,3.4,pk)*0.45);\n" + // keep hue much longer — dense gas columns were rolling to white
+            "  col=mix(col,vec3(luma),smoothstep(2.4,5.0,pk)*0.40);\n" +
             "  vec3 base=col/(col+vec3(0.85));\n" +
             "  base=pow(max(base,vec3(0.0)),vec3(0.92))*1.12;\n" +
             "  vec3 starBase=starSig/(starSig+vec3(0.85));\n" +
@@ -782,7 +564,7 @@ public class NebulaDream extends DreamService {
         private final float seedX = (float)Math.random();
         private final float seedY = (float)Math.random();
         private int sfSlot;
-        private float sfStart = -1f, sfDur, sfMag, sfNext = 3f;
+        private float sfStart = -1f, sfDur, sfMag, sfEnv, sfNext = 3f;
         private int sfLayer;
         private float sfCellX, sfCellY;
 
@@ -805,12 +587,14 @@ public class NebulaDream extends DreamService {
             return (a*(1-ux)+b*ux)*(1-uy) + (c*(1-ux)+d*ux)*uy;
         }
         private boolean cpuHasStar(float cellX, float cellY, float ox, float oy) {
-            float dn = cpuVn(cellX*0.02f+ox*0.1f, cellY*0.02f+oy*0.1f)*0.65f
-                      + cpuVn(cellX*0.06f+11f, cellY*0.06f+11f)*0.35f;
-            float dens = Math.max(0f, Math.min(1f, (dn-0.44f)/(0.64f-0.44f)));
-            dens = dens*dens*(3f-2f*dens);
-            float thresh = 0.972f - dens*0.53f;
             float h = cpuH1(cellX, cellY);
+            if (h < STAR_FLOOR) return false;
+            float dn = cpuVn(cellX*SD_FREQ_LO+ox*0.1f, cellY*SD_FREQ_LO+oy*0.1f)*SD_W_LO
+                      + cpuVn(cellX*SD_FREQ_HI+11f, cellY*SD_FREQ_HI+11f)*SD_W_HI;
+            float dens = Math.max(0f, Math.min(1f, (dn-SD_SS_LO)/(SD_SS_HI-SD_SS_LO)));
+            dens = dens*dens*(3f-2f*dens);
+            dens = dens*dens;
+            float thresh = STAR_CEIL - dens*STAR_RANGE;
             return h > thresh;
         }
         private FloatBuffer quadBuf;
@@ -954,38 +738,7 @@ public class NebulaDream extends DreamService {
             GLES20.glUniform1f(cUHdrMax,hdrTuning.max);
             GLES20.glUniform1f(cUHdrStarGain,hdrTuning.starGain);
             GLES20.glUniform1f(cUHdrStarMax,hdrTuning.starMax);
-            if (t >= sfNext) {
-                float r = sfRng.nextFloat();
-                sfMag = (float)Math.sqrt(r);
-                sfDur = 1.5f + sfRng.nextFloat() * 2.0f;
-                sfStart = t;
-                float szsp = 0.0120f * zoomMul;
-                float sph = t * szsp;
-                float bestF = -1f;
-                float[][] layerOff = {{0f,0f},{0.37f,0.21f}};
-                float[] phOff = {0f, 0.5f};
-                for (int i = 0; i < 2; i++) {
-                    float ti = sph + phOff[i];
-                    ti = ti - (float)Math.floor(ti);
-                    float fi = Math.max(0f, Math.min(1f, (ti - 0f) / 0.40f))
-                             * Math.max(0f, Math.min(1f, (1f - ti) / 0.40f));
-                    if (fi > bestF) { bestF = fi; sfLayer = i; }
-                }
-                float lox = layerOff[sfLayer][0], loy = layerOff[sfLayer][1];
-                for (int attempt = 0; attempt < 200; attempt++) {
-                    sfCellX = (float)Math.floor(sfRng.nextFloat() * 80f + lox);
-                    sfCellY = (float)Math.floor(sfRng.nextFloat() * 80f + loy);
-                    if (cpuHasStar(sfCellX, sfCellY, lox, loy)) break;
-                }
-                sfNext = t + sfDur + 0.1f + sfRng.nextFloat() * 0.5f;
-                Log.i(TAG,"FLARE cell="+sfCellX+","+sfCellY+" layer="+sfLayer+" mag="+String.format("%.3f",sfMag));
-            }
-            float sfEnv = 0f;
-            if (sfStart >= 0f && t < sfStart + sfDur) {
-                float p = (t - sfStart) / sfDur;
-                float s = (float)Math.sin(Math.PI * p);
-                sfEnv = s * s;
-            }
+            updateFlare(t);
             GLES20.glUniform4f(cUStarFlare, sfCellX, sfCellY, sfEnv * sfMag, (float)sfLayer);
             GLES20.glActiveTexture(GLES20.GL_TEXTURE0);
             GLES20.glBindTexture(GLES20.GL_TEXTURE_2D,gasTex);
@@ -999,6 +752,45 @@ public class NebulaDream extends DreamService {
                 GLES20.glFinish();
                 workAccNs += System.nanoTime()-drawStartNs;
                 workSamples++;
+            }
+        }
+
+        private void updateFlare(float t) {
+            if (t >= sfNext) {
+                sfMag = (float)Math.sqrt(sfRng.nextFloat());
+                sfDur = FLARE_DUR_MIN + sfRng.nextFloat() * FLARE_DUR_RNG;
+                sfStart = t;
+                float sph = t * SZ_SPEED * zoomMul;
+                float bestF = -1f;
+                for (int i = 0; i < LAYER_OFF.length; i++) {
+                    float ti = sph + LAYER_PHASE[i];
+                    ti -= (float)Math.floor(ti);
+                    float fi = Math.max(0f, Math.min(1f, (ti - 0.10f) / 0.20f))
+                             * Math.max(0f, Math.min(1f, (0.90f - ti) / 0.20f));
+                    if (fi > bestF) { bestF = fi; sfLayer = i; }
+                }
+                float lox = LAYER_OFF[sfLayer][0], loy = LAYER_OFF[sfLayer][1];
+                float lti = sph + LAYER_PHASE[sfLayer];
+                lti -= (float)Math.floor(lti);
+                float zoom = (float)Math.exp(lti * SZ_MAX);
+                float cxCenter = (0.5f + seedX) * STAR_DEN + lox;
+                float cyCenter = (0.5f + seedY) * STAR_DEN + loy;
+                float halfSpanX = (STAR_DEN / 2f) / zoom;
+                float aspect = screenH > 0 ? (float)screenH / screenW : 0.5625f;
+                float halfSpanY = halfSpanX * aspect;
+                for (int attempt = 0; attempt < 200; attempt++) {
+                    sfCellX = (float)Math.floor(cxCenter - halfSpanX + sfRng.nextFloat() * 2f * halfSpanX);
+                    sfCellY = (float)Math.floor(cyCenter - halfSpanY + sfRng.nextFloat() * 2f * halfSpanY);
+                    if (cpuHasStar(sfCellX, sfCellY, lox, loy)) break;
+                }
+                sfNext = t + sfDur + FLARE_GAP_MIN + sfRng.nextFloat() * FLARE_GAP_RNG;
+                Log.i(TAG,"FLARE cell="+sfCellX+","+sfCellY+" layer="+sfLayer+" mag="+String.format("%.3f",sfMag));
+            }
+            sfEnv = 0f;
+            if (sfStart >= 0f && t < sfStart + sfDur) {
+                float p = (t - sfStart) / sfDur;
+                float s = (float)Math.sin(Math.PI * p);
+                sfEnv = s * s;
             }
         }
 
