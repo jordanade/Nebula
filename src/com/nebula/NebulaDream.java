@@ -418,11 +418,11 @@ public class NebulaDream extends DreamService {
             "float twinkleComp(){ return 1.0; }\n" +
             "float starTwinkle(vec2 cell,float lid,float mag){\n" +
             "  float seed=h1(cell+vec2(17.0+lid*13.0,31.0-lid*7.0));\n" +
-            "  float rate=mix(0.12,0.35,h1(cell+5.3+lid*1.7));\n" +
+            "  float rate=mix(0.20,0.50,h1(cell+5.3+lid*1.7));\n" +
             "  float ph=6.2831853*(seed+uTime*rate);\n" +
             "  float wave=sin(ph)*0.5+0.5;\n" +
             "  float comp=twinkleComp();\n" +
-            "  float amt=mix(0.42,0.18,mag)*comp;\n" +
+            "  float amt=mix(0.65,0.30,mag)*comp;\n" +
             "  return 1.0+amt*(wave-0.5);\n" +
             "}\n" +
             "vec3 starLayer(vec2 uv,float den,float ox,float oy,float ca,float sa,float lid){\n" +
@@ -445,15 +445,15 @@ public class NebulaDream extends DreamService {
             "  float tw=starTwinkle(cell,lid,mag);\n" +
             "  float twDelta=tw-1.0;\n" +
             "  float soft=1.0+fl2*18.0;\n" +
-            "  float coreSoft=soft/max(0.52,1.0+twDelta*0.60);\n" +
-            "  float core=exp(-d2*2500.0/coreSoft)*bri*(1.0+twDelta*1.20);\n" +
+            "  float coreSoft=soft/max(0.52,1.0+twDelta*0.85);\n" +
+            "  float core=exp(-d2*2500.0/coreSoft)*bri*(1.0+twDelta*1.60);\n" +
             "  float eh=exp(-d2*100.0);\n" +
             "  float halo=eh*mag*0.15*(0.74+0.26*tw);\n" +
             "  if(fl2>0.0001) halo+=exp(-d2*40.0)*fl2*0.6;\n" +
             "  float spike=0.0;\n" +
             "  if(mag>SPIKE_THRESH||fl2>0.0001){\n" +
             "    vec2 sdf=vec2(ca*df.x+sa*df.y,-sa*df.x+ca*df.y);\n" +
-            "    float spTight=32.0/((1.0+fl2*1.0)*max(0.45,1.0+twDelta*0.80));\n" +
+            "    float spTight=32.0/((1.0+fl2*1.0)*max(0.45,1.0+twDelta*1.10));\n" +
             "    float spH=exp(-sdf.y*sdf.y*5000.0)*exp(-sdf.x*sdf.x*spTight);\n" +
             "    float spV=exp(-sdf.x*sdf.x*5000.0)*exp(-sdf.y*sdf.y*spTight);\n" +
             "    spike=(spH+spV)*bri*bri*(0.14+0.32*tw);\n" +
