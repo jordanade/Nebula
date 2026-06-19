@@ -50,4 +50,9 @@
 
     </PreferenceCategory>
 
+    <Preference
+        android:key="start_now"
+        android:title="@string/pref_start_now_title"
+        android:summary="@string/pref_start_now_summary" />
+
 </PreferenceScreen>

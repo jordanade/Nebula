@@ -10,4 +10,7 @@
 
     <string name="cat_quality">Quality &amp; performance</string>
     <string name="cat_motion">Motion</string>
+
+    <string name="pref_start_now_title">Start now</string>
+    <string name="pref_start_now_summary">Launch the screensaver</string>
 </resources>
