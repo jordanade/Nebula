@@ -8,7 +8,7 @@ A deep-space nebula rendered in real-time volumetric raymarching on the GPU. The
 
 Designed for OLED and HDR displays — deep black voids between dramatic nebula ridges, with the brightest cores driven into real panel headroom. All elements are in continuous motion.
 
-https://github.com/user-attachments/assets/64694f09-465d-44a0-8d85-9e21705ab982
+https://github.com/user-attachments/assets/183204a7-2d8e-4dca-860f-40bd0ad7b443
 
 ## Technical approach
 
