@@ -1,0 +1,1 @@
+Changed package name to com.jordanadema.nebula for F-Droid compliance.
