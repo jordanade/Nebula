@@ -1,4 +1,4 @@
-package com.nebula;
+package com.jordanadema.nebula;
 
 import android.opengl.GLSurfaceView;
 import android.util.Log;

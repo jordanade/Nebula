@@ -43,8 +43,8 @@ adb install Nebula.apk
 Set as default screensaver:
 
 ```bash
-adb shell settings put secure screensaver_components com.nebula/.NebulaDream
-adb shell settings put secure screensaver_default_component com.nebula/.NebulaDream
+adb shell settings put secure screensaver_components com.jordanadema.nebula/.NebulaDream
+adb shell settings put secure screensaver_default_component com.jordanadema.nebula/.NebulaDream
 adb shell settings put secure screensaver_enabled 1
 ```
 
@@ -134,7 +134,7 @@ adb install --no-incremental -r Nebula.apk
 If Android reports `INSTALL_FAILED_UPDATE_INCOMPATIBLE`, the installed copy was signed with a different key. Uninstall it first, then install the new build:
 
 ```bash
-adb uninstall com.nebula
+adb uninstall com.jordanadema.nebula
 adb install --no-incremental Nebula.apk
 ```
 

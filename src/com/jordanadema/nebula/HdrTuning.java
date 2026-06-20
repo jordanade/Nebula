@@ -1,4 +1,4 @@
-package com.nebula;
+package com.jordanadema.nebula;
 
 import android.os.Build;
 import android.util.Log;

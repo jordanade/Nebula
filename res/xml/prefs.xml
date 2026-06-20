@@ -13,7 +13,7 @@
             android:defaultValue="auto" />
 
         <!-- Render resolution: 10–100% upper bound for the adaptive gas FBO. -->
-        <com.nebula.SliderPreference
+        <com.jordanadema.nebula.SliderPreference
             android:key="render_scale"
             android:title="@string/pref_render_scale_title"
             android:dialogTitle="@string/pref_render_scale_title"
@@ -38,7 +38,7 @@
 
         <!-- Zoom speed on a 1–10 scale (4 = default). Scales nebula + star
              zoom together, preserving their ratio. -->
-        <com.nebula.SliderPreference
+        <com.jordanadema.nebula.SliderPreference
             android:key="zoom_speed"
             android:title="@string/pref_zoom_title"
             android:dialogTitle="@string/pref_zoom_title"

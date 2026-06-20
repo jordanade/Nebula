@@ -1,0 +1,29 @@
+Categories:
+  - Theming
+License: MIT
+AuthorName: Jordan Adema
+SourceCode: https://github.com/jordanade/Nebula
+IssueTracker: https://github.com/jordanade/Nebula/issues
+
+AutoName: Nebula
+
+RepoType: git
+Repo: https://github.com/jordanade/Nebula.git
+
+Builds:
+  - versionName: 4.5.2
+    versionCode: 15
+    commit: v4.5.2
+    output: Nebula.apk
+    build:
+      - export ANDROID_HOME=$$SDK$$
+      - export ANDROID_JAR=$$SDK$$/platforms/android-35/android.jar
+      - export BUILD_TOOLS=$$SDK$$/build-tools/35.0.0
+      - SIGNING_MODE=unsigned ./build.sh
+
+AllowedAPKSigningKeys: # to be filled after first F-Droid build
+
+AutoUpdateMode: Version
+UpdateCheckMode: Tags
+CurrentVersion: 4.5.2
+CurrentVersionCode: 15

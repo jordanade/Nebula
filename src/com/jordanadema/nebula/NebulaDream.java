@@ -1,4 +1,4 @@
-package com.nebula;
+package com.jordanadema.nebula;
 
 import android.opengl.GLES20;
 import android.opengl.GLES30;

@@ -1,4 +1,4 @@
-package com.nebula;
+package com.jordanadema.nebula;
 
 import android.content.Context;
 import android.content.res.TypedArray;
