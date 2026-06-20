@@ -100,7 +100,7 @@ fi
 # shellcheck disable=SC2086
 "$AAPT" package -f -F "$bin_dir/nebula.unaligned.apk" \
     -M AndroidManifest.xml $res_args -I "$ANDROID_JAR"
-zip -q -j "$bin_dir/nebula.unaligned.apk" "$bin_dir/classes.dex"
+(cd "$bin_dir" && "$AAPT" add -f nebula.unaligned.apk classes.dex)
 
 "$ZIPALIGN" -f 4 "$bin_dir/nebula.unaligned.apk" "$bin_dir/nebula.aligned.apk"
 
