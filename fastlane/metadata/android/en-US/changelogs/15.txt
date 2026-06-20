@@ -1,0 +1,1 @@
+Added "Start now" action to settings menu for quick screensaver launch.

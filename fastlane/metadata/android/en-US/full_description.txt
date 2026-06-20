@@ -1,0 +1,14 @@
+A deep-space nebula rendered in real-time volumetric raymarching on the GPU. The camera flies through translucent clouds of emissive gas, sculpted by a tiling 3D noise field with Worley erosion and lit by gradient relief, shell halos, and ionization-front rims.
+
+The palette centres on deep violet and indigo, with magenta and cool-blue accents. Foreground masses occlude background stars with true depth. Dense star clusters glow as pointillistic distant galaxies, and the brightest stars throw subtle aperiodic HDR flares with four-point diffraction spikes.
+
+A split-resolution pipeline keeps stars pin-sharp at native resolution while the gas runs at an adaptive lower resolution. Each screensaver activation randomises the camera path, nebula formation, and star field so no two sessions look alike.
+
+Features:
+- Volumetric raymarching through a 3D noise field
+- HDR output with automatic SDR fallback
+- Configurable render resolution, frame rate, and zoom speed
+- Burn-in safe: all elements are in continuous motion
+- No network access, no ads, no tracking
+
+Designed for OLED and HDR displays. Tested on NVIDIA Shield 2017.
