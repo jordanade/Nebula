@@ -18,6 +18,14 @@ if [ -z "${ANDROID_JAR:-}" ]; then
         exit 1
     fi
     ANDROID_JAR="$ANDROID_HOME/platforms/android-$api_level/android.jar"
+    if [ ! -f "$ANDROID_JAR" ]; then
+        # Fall back to highest available platform (for F-Droid build server)
+        ANDROID_JAR=$(ls "$ANDROID_HOME"/platforms/android-*/android.jar 2>/dev/null | sort -t- -k2 -n | tail -1 || true)
+        if [ -z "$ANDROID_JAR" ]; then
+            echo "Missing ANDROID_JAR: no android.jar found under $ANDROID_HOME/platforms/" >&2
+            exit 1
+        fi
+    fi
 fi
 
 if [ -z "${BUILD_TOOLS:-}" ]; then
@@ -26,6 +34,13 @@ if [ -z "${BUILD_TOOLS:-}" ]; then
         exit 1
     fi
     BUILD_TOOLS="$ANDROID_HOME/build-tools/$build_tools_version"
+    if [ ! -d "$BUILD_TOOLS" ]; then
+        BUILD_TOOLS=$(ls -d "$ANDROID_HOME"/build-tools/*/ 2>/dev/null | sort -V | tail -1 | sed 's:/$::' || true)
+        if [ -z "$BUILD_TOOLS" ]; then
+            echo "Missing BUILD_TOOLS: no build-tools found under $ANDROID_HOME/build-tools/" >&2
+            exit 1
+        fi
+    fi
 fi
 
 AAPT="${AAPT:-$BUILD_TOOLS/aapt}"
