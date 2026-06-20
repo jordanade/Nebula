@@ -25,20 +25,21 @@ public class SettingsActivity extends Activity {
             .commit();
     }
 
-    public static class PrefsFragment extends PreferenceFragment {
+    public static class PrefsFragment extends PreferenceFragment
+            implements Preference.OnPreferenceClickListener {
         @Override
         public void onCreate(Bundle savedInstanceState) {
             super.onCreate(savedInstanceState);
             addPreferencesFromResource(R.xml.prefs);
-            findPreference("start_now").setOnPreferenceClickListener(new Preference.OnPreferenceClickListener() {
-                @Override
-                public boolean onPreferenceClick(Preference preference) {
-                    startActivity(new Intent()
-                        .setComponent(new ComponentName("com.android.systemui",
-                            "com.android.systemui.Somnambulator")));
-                    return true;
-                }
-            });
+            findPreference("start_now").setOnPreferenceClickListener(this);
+        }
+
+        @Override
+        public boolean onPreferenceClick(Preference preference) {
+            startActivity(new Intent()
+                .setComponent(new ComponentName("com.android.systemui",
+                    "com.android.systemui.Somnambulator")));
+            return true;
         }
     }
 }
