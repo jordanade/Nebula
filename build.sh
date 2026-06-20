@@ -85,7 +85,9 @@ fi
 
 # Compile every .java under src/ (and generated R.java) in one pass.
 find src "$gen_dir" -name '*.java' 2>/dev/null > "$bin_dir/sources.txt"
-"$javac_bin" -encoding UTF-8 -source 8 -target 8 -bootclasspath "$ANDROID_JAR" \
+# --release 8 produces clean Java 8 class files without JDK 17+ attributes
+# that crash older D8 versions (NullPointerException in R8 graph processing)
+"$javac_bin" -encoding UTF-8 --release 8 -classpath "$ANDROID_JAR" \
     -d "$obj_dir" @"$bin_dir/sources.txt"
 
 if [ -x "$DX" ]; then
