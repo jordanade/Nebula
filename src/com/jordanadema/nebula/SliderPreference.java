@@ -20,7 +20,8 @@ import android.widget.TextView;
  * Presented as a dialog with a SeekBar, which is d-pad adjustable on TV
  * (left/right) once focused.
  */
-public class SliderPreference extends DialogPreference {
+public class SliderPreference extends DialogPreference
+        implements SeekBar.OnSeekBarChangeListener {
 
     private final int min;
     private final int max;
@@ -73,13 +74,7 @@ public class SliderPreference extends DialogPreference {
         seekBar = new SeekBar(ctx);
         seekBar.setMax((max - min) / step);
         seekBar.setProgress((clamp(value) - min) / step);
-        seekBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
-            public void onProgressChanged(SeekBar sb, int progress, boolean fromUser) {
-                valueLabel.setText(format(min + progress * step));
-            }
-            public void onStartTrackingTouch(SeekBar sb) {}
-            public void onStopTrackingTouch(SeekBar sb) {}
-        });
+        seekBar.setOnSeekBarChangeListener(this);
         ll.addView(seekBar, new LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
@@ -112,6 +107,12 @@ public class SliderPreference extends DialogPreference {
         if (!restorePersisted) persistInt(value);
         setSummary(format(value));
     }
+
+    public void onProgressChanged(SeekBar sb, int progress, boolean fromUser) {
+        valueLabel.setText(format(min + progress * step));
+    }
+    public void onStartTrackingTouch(SeekBar sb) {}
+    public void onStopTrackingTouch(SeekBar sb) {}
 
     private int clamp(int v) {
         if (v < min) return min;
