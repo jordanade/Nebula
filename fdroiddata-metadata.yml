@@ -11,19 +11,16 @@ RepoType: git
 Repo: https://github.com/jordanade/Nebula.git
 
 Builds:
-  - versionName: 4.6.0
-    versionCode: 16
-    commit: v4.6.0
+  - versionName: 4.6.5
+    versionCode: 21
+    commit: v4.6.5
     output: Nebula.apk
+    prebuild: sdkmanager "platforms;android-34" "build-tools;34.0.0"
     build:
       - export ANDROID_HOME=$$SDK$$
-      - export ANDROID_JAR=$$SDK$$/platforms/android-35/android.jar
-      - export BUILD_TOOLS=$$SDK$$/build-tools/35.0.0
       - SIGNING_MODE=unsigned ./build.sh
-
-AllowedAPKSigningKeys: # to be filled after first F-Droid build
 
 AutoUpdateMode: Version
 UpdateCheckMode: Tags
-CurrentVersion: 4.6.0
-CurrentVersionCode: 16
+CurrentVersion: 4.6.5
+CurrentVersionCode: 21
