@@ -15,6 +15,7 @@ import java.nio.FloatBuffer;
 public class NebulaDream extends DreamService {
 
     static final String TAG = "NebulaDream";
+    private GLSurfaceView glView;
 
     @Override
     public void onAttachedToWindow() {
@@ -26,21 +27,30 @@ public class NebulaDream extends DreamService {
         DisplayDiagnostics display = DisplayDiagnostics.configure(this);
         HdrTuning hdrTuning = HdrTuning.from(display.display);
 
-        GLSurfaceView sv = new GLSurfaceView(this);
-        sv.setEGLContextClientVersion(3); // v4: GLES 3.0 for sampler3D + glTexImage3D
+        glView = new GLSurfaceView(this);
+        glView.setEGLContextClientVersion(3); // v4: GLES 3.0 for sampler3D + glTexImage3D
         // HDR is opt-in and feature-detected; falls back to an 8-bit SDR
         // config when unsupported or disabled. The same object chooses the
         // config and creates the (optionally HDR-colorspace) window surface.
         HdrSurface hdr = new HdrSurface(prefs.hdrMode());
-        sv.setEGLConfigChooser(hdr);
-        sv.setEGLWindowSurfaceFactory(hdr);
+        glView.setEGLConfigChooser(hdr);
+        glView.setEGLWindowSurfaceFactory(hdr);
         // Split-resolution: the window uses the best app surface Android grants,
         // while adaptive render scale governs only the low-res gas FBO.
-        sv.setRenderer(new NebulaRenderer(
+        glView.setRenderer(new NebulaRenderer(
             prefs.zoomMul(), prefs.frameCapFps(), hdr,
             prefs.renderScale(), hdrTuning, display));
-        sv.setRenderMode(GLSurfaceView.RENDERMODE_CONTINUOUSLY);
-        setContentView(sv);
+        glView.setRenderMode(GLSurfaceView.RENDERMODE_CONTINUOUSLY);
+        setContentView(glView);
+    }
+
+    @Override
+    public void onDetachedFromWindow() {
+        if (glView != null) {
+            glView.onPause();
+            glView = null;
+        }
+        super.onDetachedFromWindow();
     }
 
     static class NebulaRenderer implements GLSurfaceView.Renderer {
