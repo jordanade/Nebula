@@ -165,4 +165,4 @@ adb shell wm density 320
 
 ## License
 
-MIT
+GPL-3.0-only
