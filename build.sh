@@ -129,7 +129,7 @@ case "$signing_mode" in
             set -- "$@" --key-pass "pass:$RELEASE_KEY_PASS"
         fi
 
-        "$APKSIGNER" sign "$@" --out "$out_apk" "$bin_dir/nebula.aligned.apk"
+        "$APKSIGNER" sign --alignment-preserved true "$@" --out "$out_apk" "$bin_dir/nebula.aligned.apk"
         "$APKSIGNER" verify --verbose "$out_apk"
         ;;
     debug)
