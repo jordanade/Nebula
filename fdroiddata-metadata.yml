@@ -19,9 +19,16 @@ Builds:
     prebuild: sdkmanager "platforms;android-35" "build-tools;35.0.0"
     build: TZ=UTC SIGNING_MODE=unsigned ./build.sh
 
+  - versionName: 4.6.8
+    versionCode: 24
+    commit: 1cffb543159e059999bb2a7469e35dc8e0345f4c
+    output: Nebula.apk
+    prebuild: sdkmanager "platforms;android-35" "build-tools;35.0.0"
+    build: TZ=UTC SIGNING_MODE=unsigned ./build.sh
+
 AllowedAPKSigningKeys: 878ec6cee21525482bd880c97bde14e1be71a27d581502f7326457daf6693639
 
 AutoUpdateMode: Version
 UpdateCheckMode: Tags
-CurrentVersion: 4.6.7
-CurrentVersionCode: 23
+CurrentVersion: 4.6.8
+CurrentVersionCode: 24
