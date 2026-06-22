@@ -10,7 +10,7 @@
         <item>off</item>
     </string-array>
 
-    <!-- Frame rate cap (fps). 25fps is the default; higher caps are for faster hardware. -->
+    <!-- Frame rate (fps). 25fps is the default. -->
     <string-array name="frame_cap_entries">
         <item>10 fps (coolest)</item>
         <item>15 fps</item>

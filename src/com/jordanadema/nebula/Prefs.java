@@ -36,20 +36,13 @@ final class Prefs {
         return (v == null) ? HDR_AUTO : v;
     }
 
-    // Slider prefs are stored as ints (see SliderPreference); scale to floats.
-    // Default 35%: a modest softening on the low-frequency gas that cuts
-    // fragment cost for cooler all-night running. Raise toward 100 for more detail
-    // when the hardware has the thermal headroom. Values below 35 are an
-    // explicit low-power escape hatch, not the recommended baseline.
-    float renderScale() { return clampF(getIntPref(RENDER_SCALE, 35) / 100f, 0.10f, 1.0f); }
+    float renderScale() { return clampF(getIntPref(RENDER_SCALE, 45) / 100f, 0.10f, 1.0f); }
 
     float zoomMul() {
         int s = getIntPref(ZOOM_SPEED, 4);
         return Math.max(0.15f, (float)Math.pow(2.0, (s - 4) / 2.4));
     }
 
-    // Frame cap is a ListPreference (string). 25fps is the default;
-    // higher caps are available for faster hardware.
     int frameCapFps() { return clampI(getStringInt(FRAME_CAP, 25), 10, 30); }
 
     private int getIntPref(String key, int def) {

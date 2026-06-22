@@ -610,8 +610,12 @@ public class NebulaDream extends DreamService {
         private FloatBuffer quadBuf;
         private long startMs;
         private long lastDrawMs;
-        private long fpsT0; private int fpsN; private long workAccNs; // sampled GPU timing instrumentation
+        private long fpsT0; private int fpsN; private long workAccNs;
         private int workSamples;
+        private static final int GL_TIME_ELAPSED_EXT = 0x88BF;
+        private int[] timerQuery;
+        private boolean timerQueryPending;
+        private boolean hasTimerQuery;
         private int screenW, screenH;
 
         private final float zoomMul;     // zoom-speed multiplier (1.0 = default)
@@ -668,6 +672,15 @@ public class NebulaDream extends DreamService {
             cUGas    = GLES20.glGetUniformLocation(progComp,"uGas");
 
             noiseTex = buildNoiseTexture(64); // re-upload each context (ids go stale); CPU gen is cached
+            String exts = GLES20.glGetString(GLES20.GL_EXTENSIONS);
+            hasTimerQuery = exts != null && exts.contains("GL_EXT_disjoint_timer_query");
+            if (hasTimerQuery) {
+                timerQuery = new int[1];
+                GLES30.glGenQueries(1, timerQuery, 0);
+            } else {
+                Log.w(TAG, "GL_EXT_disjoint_timer_query unavailable; GPU work timing disabled");
+            }
+            timerQueryPending = false;
             ByteBuffer bb=ByteBuffer.allocateDirect(QUAD.length*4);
             bb.order(ByteOrder.nativeOrder());
             quadBuf=bb.asFloatBuffer();
@@ -695,8 +708,20 @@ public class NebulaDream extends DreamService {
             }
             lastDrawMs=SystemClock.elapsedRealtime();
 
-            // Log cadence plus sampled GPU work-time. Sampling avoids forcing a
-            // CPU/GPU sync every frame during normal screensaver operation.
+            // Collect pending GPU timer query result (non-blocking).
+            if (hasTimerQuery && timerQueryPending) {
+                int[] avail = new int[1];
+                GLES30.glGetQueryObjectuiv(timerQuery[0], GLES30.GL_QUERY_RESULT_AVAILABLE, avail, 0);
+                if (avail[0] != 0) {
+                    int[] gpuNs = new int[1];
+                    GLES30.glGetQueryObjectuiv(timerQuery[0], GLES30.GL_QUERY_RESULT, gpuNs, 0);
+                    workAccNs += gpuNs[0];
+                    workSamples++;
+                    timerQueryPending = false;
+                }
+            }
+
+            // Log cadence plus sampled GPU work-time.
             fpsN++;
             if (fpsT0==0) fpsT0=lastDrawMs;
             else if (lastDrawMs-fpsT0>=2000) {
@@ -713,12 +738,12 @@ public class NebulaDream extends DreamService {
                 if (SystemClock.elapsedRealtime() - startMs > 6000) adaptGasScale(workMs);
                 fpsN=0; fpsT0=lastDrawMs; workAccNs=0; workSamples=0;
             }
-            boolean sampleWork = (fpsN % 20) == 0;
-            long drawStartNs = sampleWork ? System.nanoTime() : 0L;
+            boolean sampleWork = hasTimerQuery && !timerQueryPending && (fpsN % 20) == 0;
 
             float t=(SystemClock.elapsedRealtime()-startMs)/1000f;
 
             // ── PASS 1: raymarch the gas into the low-res FBO ────────────────
+            if (sampleWork) GLES30.glBeginQuery(GL_TIME_ELAPSED_EXT, timerQuery[0]);
             GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER,gasFbo);
             GLES20.glViewport(0,0,gasW,gasH);
             GLES20.glUseProgram(progGas);
@@ -759,9 +784,8 @@ public class NebulaDream extends DreamService {
             GLES20.glDrawArrays(GLES20.GL_TRIANGLES,0,6);
 
             if (sampleWork) {
-                GLES20.glFinish();
-                workAccNs += System.nanoTime()-drawStartNs;
-                workSamples++;
+                GLES30.glEndQuery(GL_TIME_ELAPSED_EXT);
+                timerQueryPending = true;
             }
         }
 

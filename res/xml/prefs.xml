@@ -12,18 +12,6 @@
             android:entryValues="@array/hdr_mode_values"
             android:defaultValue="auto" />
 
-        <!-- Render resolution: 10–100% upper bound for the adaptive gas FBO. -->
-        <com.jordanadema.nebula.SliderPreference
-            android:key="render_scale"
-            android:title="@string/pref_render_scale_title"
-            android:dialogTitle="@string/pref_render_scale_title"
-            android:defaultValue="35"
-            app:sliderMin="10"
-            app:sliderMax="100"
-            app:sliderStep="5"
-            app:sliderScale="1.0"
-            app:sliderSuffix="%" />
-
         <ListPreference
             android:key="frame_cap"
             android:title="@string/pref_frame_cap_title"
@@ -31,6 +19,18 @@
             android:entries="@array/frame_cap_entries"
             android:entryValues="@array/frame_cap_values"
             android:defaultValue="25" />
+
+        <!-- Nebula resolution cap: 10–100% upper bound for the adaptive gas FBO. -->
+        <com.jordanadema.nebula.SliderPreference
+            android:key="render_scale"
+            android:title="@string/pref_render_scale_title"
+            android:dialogTitle="@string/pref_render_scale_title"
+            android:defaultValue="45"
+            app:sliderMin="10"
+            app:sliderMax="100"
+            app:sliderStep="5"
+            app:sliderScale="1.0"
+            app:sliderSuffix="%" />
 
     </PreferenceCategory>
 
