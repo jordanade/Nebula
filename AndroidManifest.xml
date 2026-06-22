@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="com.jordanadema.nebula"
-    android:versionCode="23"
-    android:versionName="4.6.7">
-    <uses-sdk android:minSdkVersion="21" android:targetSdkVersion="23"/>
+    android:versionCode="24"
+    android:versionName="4.6.8">
+    <uses-sdk android:minSdkVersion="21" android:targetSdkVersion="35"/>
     <uses-feature android:glEsVersion="0x00030000" android:required="true"/>
     <uses-feature android:name="android.software.leanback" android:required="true"/>
     <uses-feature android:name="android.hardware.touchscreen" android:required="false"/>
