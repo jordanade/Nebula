@@ -32,6 +32,33 @@ logic are no-ops there.
 - **Settings layout on phones** — the first preference row is no longer hidden
   behind One UI's oversized collapsing title.
 
+## 4.6 — 2026-06-22
+
+The F-Droid release line — reproducible unsigned builds, a license change, and a
+batch of packaging and stability fixes ahead of submission.
+
+### Changed
+- **Package renamed** to `com.jordanadema.nebula`.
+- **License changed** from MIT to **GPL-3.0-only**.
+- **targetSdkVersion raised to 35**.
+- **Tuned defaults** to 25 fps and 45% maximum gas resolution, and removed an
+  instrumentation-induced stutter.
+- **Richer TV banner** with stars and diffraction spikes.
+
+### Fixed
+- **HDMI signal loss on exit** — the GL thread now stops when the dream is
+  dismissed, so the display no longer drops signal.
+- **Reproducible F-Droid builds** — preserve zip alignment when signing, use
+  `aapt add` instead of `zip`, compile with `--release 8` for D8 compatibility,
+  remove anonymous inner classes that crashed D8, and auto-detect the SDK
+  platform and build-tools.
+
+## 4.5 — 2026-06-19
+
+### Added
+- **"Start now"** action in the settings menu to launch the screensaver
+  directly from the dream's own settings screen.
+
 ## 4.4 — 2026-06-17
 
 A star-field quality and performance pass on the v4 volumetric renderer. Star
