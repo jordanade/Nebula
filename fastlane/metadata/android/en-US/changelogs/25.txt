@@ -1,0 +1,1 @@
+Nebula now runs on phones as well as Android TV. Stars scale to the display so they look right on tall phone screens, HDR brightness adapts per device with a new manual override (50-200%), and the settings layout and "Start now" action are fixed for phones. The Shield/TV experience is unchanged.

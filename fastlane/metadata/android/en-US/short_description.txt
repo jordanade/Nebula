@@ -1,1 +1,1 @@
-GPU-accelerated nebula fly-through screensaver for NVIDIA Shield
+GPU-accelerated HDR nebula fly-through screensaver

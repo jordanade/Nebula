@@ -12,10 +12,11 @@ import android.preference.PreferenceManager;
  */
 final class Prefs {
 
-    static final String HDR_MODE     = "hdr_mode";      // auto | off
-    static final String RENDER_SCALE = "render_scale";  // 0.50 .. 1.00
-    static final String FRAME_CAP    = "frame_cap";     // fps, 0 = uncapped
-    static final String ZOOM_SPEED   = "zoom_speed";    // zSpd
+    static final String HDR_MODE      = "hdr_mode";      // auto | off
+    static final String HDR_INTENSITY = "hdr_intensity"; // percent, 100 = 1.0x bias
+    static final String RENDER_SCALE  = "render_scale";  // 0.50 .. 1.00
+    static final String FRAME_CAP     = "frame_cap";     // fps, 0 = uncapped
+    static final String ZOOM_SPEED    = "zoom_speed";    // zSpd
 
     static final String HDR_AUTO = "auto";
     static final String HDR_OFF  = "off";
@@ -35,6 +36,9 @@ final class Prefs {
         String v = sp.getString(HDR_MODE, HDR_AUTO);
         return (v == null) ? HDR_AUTO : v;
     }
+
+    /** Manual HDR brightness bias, 1.0 = neutral. Multiplies the auto headroom. */
+    float hdrBias() { return clampF(getIntPref(HDR_INTENSITY, 100) / 100f, 0.5f, 2.0f); }
 
     float renderScale() { return clampF(getIntPref(RENDER_SCALE, 45) / 100f, 0.10f, 1.0f); }
 

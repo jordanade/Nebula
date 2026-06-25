@@ -2,6 +2,36 @@
 
 All notable changes to Nebula are documented here.
 
+## 4.7.0 — 2026-06-24
+
+Nebula becomes a phone app as well as a TV app, with HDR brightness that adapts
+per device. The renderer is unchanged on the Shield — the new scaling and HDR
+logic are no-ops there.
+
+### Added
+- **Runs on phones**, not just Android TV — the `leanback` feature is now
+  optional, so Nebula installs and runs on any Android phone with a capable GPU.
+- **Surface-relative star scaling** — stars are sized to the surface width, so
+  a narrow portrait phone no longer renders them tiny. The scale is exactly
+  1.0 on any display ≥1920 wide, leaving Shield/TV output untouched.
+- **Live HDR headroom** — on Android 14+ the tonemap reads the compositor's
+  actual `getHdrSdrRatio` and re-tunes whenever it changes, instead of relying
+  only on the static panel descriptor. Falls back cleanly on older devices.
+- **HDR brightness** setting (50–200%) — a manual bias over the auto-detected
+  headroom for panels that under- or over-report.
+
+### Changed
+- **Max panel brightness** is requested for the dream window, alongside an
+  explicit HDR-headroom request, to push the brightest stars and flares toward
+  peak luminance where the platform allows it.
+- **"Start now"** is manufacturer-aware: it opens the system Screen saver page
+  on devices (e.g. Samsung One UI) that block the direct dream-start, and keeps
+  the instant launch on Shield/stock Android.
+
+### Fixed
+- **Settings layout on phones** — the first preference row is no longer hidden
+  behind One UI's oversized collapsing title.
+
 ## 4.4 — 2026-06-17
 
 A star-field quality and performance pass on the v4 volumetric renderer. Star

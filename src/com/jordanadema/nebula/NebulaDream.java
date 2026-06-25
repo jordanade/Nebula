@@ -3,19 +3,28 @@ package com.jordanadema.nebula;
 import android.opengl.GLES20;
 import android.opengl.GLES30;
 import android.opengl.GLSurfaceView;
+import android.os.Build;
 import android.os.SystemClock;
 import android.service.dreams.DreamService;
 import android.util.Log;
+import android.view.Display;
+import android.view.Window;
+import android.view.WindowManager;
 import javax.microedition.khronos.egl.EGLConfig;
 import javax.microedition.khronos.opengles.GL10;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.FloatBuffer;
+import java.util.function.Consumer;
 
 public class NebulaDream extends DreamService {
 
     static final String TAG = "NebulaDream";
     private GLSurfaceView glView;
+    private NebulaRenderer renderer;
+    private DisplayDiagnostics displayDiag;
+    private Consumer<Display> hdrRatioListener;
+    private float hdrBias = 1.0f;
 
     @Override
     public void onAttachedToWindow() {
@@ -25,7 +34,36 @@ public class NebulaDream extends DreamService {
 
         Prefs prefs = Prefs.from(this);
         DisplayDiagnostics display = DisplayDiagnostics.configure(this);
-        HdrTuning hdrTuning = HdrTuning.from(display.display);
+        displayDiag = display;
+        hdrBias = prefs.hdrBias();
+        boolean wantHdr = !Prefs.HDR_OFF.equals(prefs.hdrMode());
+
+        // Drive the panel for maximum highlight luminance: full screen
+        // brightness for any surface, plus an explicit request for the
+        // display's full HDR headroom so the brightest stars/flares can reach
+        // peak nits rather than the compositor's conservative default.
+        Window window = getWindow();
+        if (window != null) {
+            WindowManager.LayoutParams lp = window.getAttributes();
+            // Max panel brightness for any surface. On devices that grant app
+            // HDR headroom this still leaves room above SDR white for the
+            // brightest stars; on those that don't (measured: One UI pins
+            // getHdrSdrRatio at 1.0 for an scRGB surface at every brightness),
+            // max SDR white is the only lever, so 1.0 is the right call there.
+            lp.screenBrightness = 1.0f; // BRIGHTNESS_OVERRIDE_FULL
+            window.setAttributes(lp);
+            if (wantHdr && Build.VERSION.SDK_INT >= 34) {
+                // Opportunistic: harmless where headroom isn't granted, and the
+                // ratio listener re-tunes live on devices that do grant it.
+                try {
+                    window.setDesiredHdrHeadroom(HdrTuning.MAX_HEADROOM);
+                } catch (IllegalArgumentException e) {
+                    Log.w(TAG, "setDesiredHdrHeadroom rejected", e);
+                }
+            }
+        }
+
+        HdrTuning hdrTuning = HdrTuning.from(display.display, hdrBias);
 
         glView = new GLSurfaceView(this);
         glView.setEGLContextClientVersion(3); // v4: GLES 3.0 for sampler3D + glTexImage3D
@@ -37,19 +75,45 @@ public class NebulaDream extends DreamService {
         glView.setEGLWindowSurfaceFactory(hdr);
         // Split-resolution: the window uses the best app surface Android grants,
         // while adaptive render scale governs only the low-res gas FBO.
-        glView.setRenderer(new NebulaRenderer(
+        renderer = new NebulaRenderer(
             prefs.zoomMul(), prefs.frameCapFps(), hdr,
-            prefs.renderScale(), hdrTuning, display));
+            prefs.renderScale(), hdrTuning, display);
+        glView.setRenderer(renderer);
         glView.setRenderMode(GLSurfaceView.RENDERMODE_CONTINUOUSLY);
         setContentView(glView);
+
+        registerHdrRatioListener(display.display);
+    }
+
+    // The granted HDR/SDR ratio is dynamic — it shifts with panel brightness,
+    // adaptive brightness and thermal headroom. Re-derive the tonemap tuning
+    // whenever it changes and hot-swap it into the renderer (read every frame).
+    private void registerHdrRatioListener(Display d) {
+        boolean available = d != null && Build.VERSION.SDK_INT >= 34 && d.isHdrSdrRatioAvailable();
+        Log.i(TAG, "HDR ratio listener: sdk=" + Build.VERSION.SDK_INT
+            + " available=" + available
+            + " initial=" + (available ? String.format("%.2f", d.getHdrSdrRatio()) : "n/a"));
+        if (!available) return;
+        hdrRatioListener = disp -> {
+            Log.i(TAG, "HDR ratio changed live=" + String.format("%.2f", disp.getHdrSdrRatio()));
+            HdrTuning t = HdrTuning.from(disp, hdrBias);
+            if (renderer != null) renderer.setHdrTuning(t);
+        };
+        d.registerHdrSdrRatioChangedListener(getMainExecutor(), hdrRatioListener);
     }
 
     @Override
     public void onDetachedFromWindow() {
+        if (hdrRatioListener != null && displayDiag != null && displayDiag.display != null
+                && Build.VERSION.SDK_INT >= 34) {
+            displayDiag.display.unregisterHdrSdrRatioChangedListener(hdrRatioListener);
+            hdrRatioListener = null;
+        }
         if (glView != null) {
             glView.onPause();
             glView = null;
         }
+        renderer = null;
         super.onDetachedFromWindow();
     }
 
@@ -77,6 +141,15 @@ public class NebulaDream extends DreamService {
 
         // Star grid and zoom
         private static final float STAR_DEN    = 80.0f;
+        // Stars are sized in cell space, so their pixel size tracks surface
+        // WIDTH (width/STAR_DEN per cell). A narrow portrait phone surface
+        // therefore renders much smaller stars than a wide TV. uStarScale
+        // multiplies the grid density to hold star pixel size constant relative
+        // to STAR_REF_WIDTH: 1.0 for any surface >= the reference (every
+        // Shield/TV config, so they are untouched), <1 on narrower surfaces so
+        // stars grow (fewer, larger) to match the reference look.
+        private static final float STAR_REF_WIDTH = 1920.0f;
+        private static final float STAR_SCALE_MIN = 0.45f;
         private static final float SZ_SPEED    = 0.0120f;
         private static final float SZ_MAX      = 0.75f;
         private static final float L0_OX = 0.0f,  L0_OY = 0.0f;
@@ -179,6 +252,7 @@ public class NebulaDream extends DreamService {
             "uniform float uTime;\n" +
             "uniform vec2  uRes;\n" +       // gas FBO resolution (same aspect as the panel)
             "uniform float uZoom;\n" +      // star zoom speed (haze rides the star grid)
+            "uniform float uStarScale;\n" + // grid-density scale (1.0 = reference width)
             "uniform vec2 uSeed;\n" +
             "uniform sampler3D uNoise;\n" + // R = value fbm, G = inverted Worley (billow)
             "in vec2 vUv;\n" +
@@ -352,9 +426,9 @@ public class NebulaDream extends DreamService {
             "  vec2 sr1=vec2(sc.x*0.951-sc.y*0.309, sc.x*0.309+sc.y*0.951);\n" +
             "  vec2 sr2=vec2(sc.x*0.423-sc.y*0.906, sc.x*0.906+sc.y*0.423);\n" +
             "  vec2 sr3=vec2(-sc.x*0.602-sc.y*0.799, sc.x*0.799-sc.y*0.602);\n" +
-            "  hz+=hazeLayer(sr1/exp(t1*SZ_MAX)+0.5+uSeed,STAR_DEN,L0_OX,L0_OY)*f1;\n" +
-            "  hz+=hazeLayer(sr2/exp(t2*SZ_MAX)+0.5+uSeed,STAR_DEN,L1_OX,L1_OY)*f2*0.85;\n" +
-            "  hz+=hazeLayer(sr3/exp(t3*SZ_MAX)+0.5+uSeed,STAR_DEN,0.71,0.53)*f3*0.70;\n" +
+            "  hz+=hazeLayer(sr1/exp(t1*SZ_MAX)+0.5+uSeed,STAR_DEN*uStarScale,L0_OX,L0_OY)*f1;\n" +
+            "  hz+=hazeLayer(sr2/exp(t2*SZ_MAX)+0.5+uSeed,STAR_DEN*uStarScale,L1_OX,L1_OY)*f2*0.85;\n" +
+            "  hz+=hazeLayer(sr3/exp(t3*SZ_MAX)+0.5+uSeed,STAR_DEN*uStarScale,0.71,0.53)*f3*0.70;\n" +
             "  hz+=vec3(0.0);\n" +
             "  vec3 pFar=ro+rd*55.0;\n" +
             "  float farBase=texture(uNoise,pFar*0.062).r;\n" +
@@ -398,6 +472,7 @@ public class NebulaDream extends DreamService {
             "uniform float uTime;\n" +
             "uniform vec2  uRes;\n" +
             "uniform float uZoom;\n" +
+            "uniform float uStarScale;\n" + // grid-density scale (1.0 = reference width)
             "uniform float uHdr;\n" +
             "uniform float uHdrKnee;\n" +
             "uniform float uHdrGain;\n" +
@@ -503,11 +578,11 @@ public class NebulaDream extends DreamService {
             "  vec2 sr2=vec2(sc.x*0.423-sc.y*0.906, sc.x*0.906+sc.y*0.423);\n" +
             "  vec2 s1=sr1/exp(t1*SZ_MAX)+0.5+uSeed;\n" +
             "  vec2 s2=sr2/exp(t2*SZ_MAX)+0.5+uSeed;\n" +
-            "  bg+=starLayer(s1,STAR_DEN,L0_OX,L0_OY,0.951,0.309,0.0)*f1;\n" +
-            "  bg+=starLayer(s2,STAR_DEN,L1_OX,L1_OY,0.423,0.906,1.0)*f2;\n" +
+            "  bg+=starLayer(s1,STAR_DEN*uStarScale,L0_OX,L0_OY,0.951,0.309,0.0)*f1;\n" +
+            "  bg+=starLayer(s2,STAR_DEN*uStarScale,L1_OX,L1_OY,0.423,0.906,1.0)*f2;\n" +
             "  vec2 sdUv=(f1>=f2)?s1:s2;\n" +
             "  float sdOx=(f1>=f2)?L0_OX:L1_OX; float sdOy=(f1>=f2)?L0_OY:L1_OY;\n" +
-            "  vec2 sdGp=sdUv*STAR_DEN+vec2(sdOx,sdOy);\n" +
+            "  vec2 sdGp=sdUv*STAR_DEN*uStarScale+vec2(sdOx,sdOy);\n" +
             "  float sdField=vn(sdGp*SD_FREQ_LO+vec2(sdOx*0.1,sdOy*0.1))*SD_W_LO+vn(sdGp*SD_FREQ_HI+11.0)*SD_W_HI;\n" +
             "  float sdD=smoothstep(SD_SS_LO,SD_SS_HI,sdField); sdD*=sdD;\n" +
             "  vec2 scUv=sc+0.5;\n" +
@@ -563,10 +638,10 @@ public class NebulaDream extends DreamService {
             "}\n";
 
         // Pass 1 (gas, low-res FBO): program + locations
-        private int progGas, gAPos, gUTime, gURes, gUNoise, gUZoom, gUSeed;
+        private int progGas, gAPos, gUTime, gURes, gUNoise, gUZoom, gUSeed, gUStarScale;
         // Pass 2 (composite, native res): program + locations
         private int progComp, cAPos, cUTime, cURes, cUZoom, cUHdr, cUHdrKnee, cUHdrGain, cUHdrMax,
-            cUHdrStarGain, cUHdrStarMax, cUStarFlare, cUSeed, cUGas;
+            cUHdrStarGain, cUHdrStarMax, cUStarFlare, cUSeed, cUGas, cUStarScale;
         private int noiseTex;            // v4: 3D noise texture
         private int gasFbo, gasTex;      // v4: low-res gas render target
         private int gasW, gasH;
@@ -617,6 +692,7 @@ public class NebulaDream extends DreamService {
         private boolean timerQueryPending;
         private boolean hasTimerQuery;
         private int screenW, screenH;
+        private float starScale = 1f;    // grid-density scale; 1.0 = reference width
 
         private final float zoomMul;     // zoom-speed multiplier (1.0 = default)
         private final float gasScaleMax; // user setting; adaptive scaling never exceeds it
@@ -625,7 +701,10 @@ public class NebulaDream extends DreamService {
         // is below the budget; at high render scales this shader is GPU-bound.
         private final long frameMs;
         private final HdrSurface hdr;
-        private final HdrTuning hdrTuning;
+        // Hot-swappable: replaced from the HDR ratio listener on the main
+        // thread, read on the GL thread each frame. volatile makes the swap
+        // visible without locking.
+        private volatile HdrTuning hdrTuning;
         private final DisplayDiagnostics display;
 
         NebulaRenderer(float zoomMul, int frameCapFps, HdrSurface hdr, float gasScale,
@@ -638,6 +717,8 @@ public class NebulaDream extends DreamService {
             this.hdrTuning = hdrTuning;
             this.display = display;
         }
+
+        void setHdrTuning(HdrTuning t) { if (t != null) this.hdrTuning = t; }
 
         @Override
         public void onSurfaceCreated(GL10 gl, EGLConfig cfg) {
@@ -655,6 +736,7 @@ public class NebulaDream extends DreamService {
             gUNoise = GLES20.glGetUniformLocation(progGas,"uNoise");
             gUZoom  = GLES20.glGetUniformLocation(progGas,"uZoom");
             gUSeed  = GLES20.glGetUniformLocation(progGas,"uSeed");
+            gUStarScale = GLES20.glGetUniformLocation(progGas,"uStarScale");
 
             progComp = buildProg(VERT_ES3, FRAG_COMP);
             cAPos    = GLES20.glGetAttribLocation(progComp,"aPos");
@@ -670,6 +752,7 @@ public class NebulaDream extends DreamService {
             cUSeed   = GLES20.glGetUniformLocation(progComp,"uSeed");
             cUStarFlare = GLES20.glGetUniformLocation(progComp,"uStarFlare");
             cUGas    = GLES20.glGetUniformLocation(progComp,"uGas");
+            cUStarScale = GLES20.glGetUniformLocation(progComp,"uStarScale");
 
             noiseTex = buildNoiseTexture(64); // re-upload each context (ids go stale); CPU gen is cached
             String exts = GLES20.glGetString(GLES20.GL_EXTENSIONS);
@@ -692,6 +775,11 @@ public class NebulaDream extends DreamService {
         public void onSurfaceChanged(GL10 gl, int w, int h) {
             screenW=w; screenH=h;
             GLES20.glViewport(0,0,w,h);
+
+            // Hold star pixel size constant relative to the reference width so a
+            // narrow phone surface doesn't render tiny stars. >= reference -> 1.0.
+            starScale = Math.max(STAR_SCALE_MIN, Math.min(1f, w / STAR_REF_WIDTH));
+            Log.i(TAG, "star scale=" + String.format("%.3f", starScale) + " surfaceW=" + w);
 
             gasScaleActive = initialGasScale(w, h);
             recreateGasTarget();
@@ -734,7 +822,8 @@ public class NebulaDream extends DreamService {
                     +" hdr="+(hdr!=null&&hdr.hdrActive)
                     +" activeMode="+((display==null)?"unknown":display.activeMode())
                     +" requestedMode="+((display==null)?"none":display.requestedMode)
-                    +" hdrCaps="+((display==null)?"unknown":display.hdrCaps));
+                    +" hdrCaps="+((display==null)?"unknown":display.hdrCaps)
+                    +" hdrRatio="+((display==null)?"n/a":display.hdrRatioLabel()));
                 if (SystemClock.elapsedRealtime() - startMs > 6000) adaptGasScale(workMs);
                 fpsN=0; fpsT0=lastDrawMs; workAccNs=0; workSamples=0;
             }
@@ -750,6 +839,7 @@ public class NebulaDream extends DreamService {
             GLES20.glUniform1f(gUTime,t);
             GLES20.glUniform2f(gURes,(float)gasW,(float)gasH);
             GLES20.glUniform1f(gUZoom,zoomMul);
+            GLES20.glUniform1f(gUStarScale,starScale);
             GLES20.glUniform2f(gUSeed,seedX,seedY);
             GLES20.glActiveTexture(GLES20.GL_TEXTURE0);
             GLES30.glBindTexture(GLES30.GL_TEXTURE_3D,noiseTex);
@@ -766,13 +856,15 @@ public class NebulaDream extends DreamService {
             GLES20.glUniform1f(cUTime,t);
             GLES20.glUniform2f(cURes,(float)screenW,(float)screenH);
             GLES20.glUniform1f(cUZoom,zoomMul);
+            GLES20.glUniform1f(cUStarScale,starScale);
             GLES20.glUniform2f(cUSeed,seedX,seedY);
+            HdrTuning tuning = hdrTuning; // snapshot the volatile for a tear-free frame
             GLES20.glUniform1f(cUHdr,(hdr!=null && hdr.hdrActive)?1f:0f);
-            GLES20.glUniform1f(cUHdrKnee,hdrTuning.knee);
-            GLES20.glUniform1f(cUHdrGain,hdrTuning.gain);
-            GLES20.glUniform1f(cUHdrMax,hdrTuning.max);
-            GLES20.glUniform1f(cUHdrStarGain,hdrTuning.starGain);
-            GLES20.glUniform1f(cUHdrStarMax,hdrTuning.starMax);
+            GLES20.glUniform1f(cUHdrKnee,tuning.knee);
+            GLES20.glUniform1f(cUHdrGain,tuning.gain);
+            GLES20.glUniform1f(cUHdrMax,tuning.max);
+            GLES20.glUniform1f(cUHdrStarGain,tuning.starGain);
+            GLES20.glUniform1f(cUHdrStarMax,tuning.starMax);
             updateFlare(t);
             GLES20.glUniform4f(cUStarFlare, sfCellX, sfCellY, sfEnv * sfMag, (float)sfLayer);
             GLES20.glActiveTexture(GLES20.GL_TEXTURE0);
@@ -807,9 +899,10 @@ public class NebulaDream extends DreamService {
                 float lti = sph + LAYER_PHASE[sfLayer];
                 lti -= (float)Math.floor(lti);
                 float zoom = (float)Math.exp(lti * SZ_MAX);
-                float cxCenter = (0.5f + seedX) * STAR_DEN + lox;
-                float cyCenter = (0.5f + seedY) * STAR_DEN + loy;
-                float halfSpanX = (STAR_DEN / 2f) / zoom;
+                float den = STAR_DEN * starScale; // match the shader's scaled grid
+                float cxCenter = (0.5f + seedX) * den + lox;
+                float cyCenter = (0.5f + seedY) * den + loy;
+                float halfSpanX = (den / 2f) / zoom;
                 float aspect = screenH > 0 ? (float)screenH / screenW : 0.5625f;
                 float halfSpanY = halfSpanX * aspect;
                 for (int attempt = 0; attempt < 200; attempt++) {

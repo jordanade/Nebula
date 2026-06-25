@@ -11,4 +11,4 @@ Features:
 - Burn-in safe: all elements are in continuous motion
 - No network access, no ads, no tracking
 
-Designed for OLED and HDR displays. Tested on NVIDIA Shield 2017.
+Optimized for the NVIDIA Shield and HDR displays, but runs on any Android phone or TV with a sufficiently powerful GPU.

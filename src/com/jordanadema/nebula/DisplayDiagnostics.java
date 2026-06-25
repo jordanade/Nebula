@@ -79,6 +79,13 @@ final class DisplayDiagnostics {
         return modeLabel(display.getMode());
     }
 
+    /** Live HDR/SDR headroom the compositor is granting, or why it's absent. */
+    String hdrRatioLabel() {
+        if (display == null || Build.VERSION.SDK_INT < 34) return "n/a";
+        if (!display.isHdrSdrRatioAvailable()) return "unavail";
+        return String.format("%.2f", display.getHdrSdrRatio());
+    }
+
     String surfaceLimitMessage(int w, int h) {
         if (display == null || Build.VERSION.SDK_INT < 23) return null;
         Display.Mode active = display.getMode();

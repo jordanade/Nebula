@@ -4,6 +4,7 @@
     <string name="settings_title">Nebula settings</string>
 
     <string name="pref_hdr_title">HDR output</string>
+    <string name="pref_hdr_brightness_title">HDR brightness</string>
     <string name="pref_render_scale_title">Nebula resolution cap</string>
     <string name="pref_frame_cap_title">Frame rate</string>
     <string name="pref_zoom_title">Zoom speed</string>

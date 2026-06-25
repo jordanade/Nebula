@@ -1,10 +1,10 @@
 # Nebula
 
-A GPU-accelerated nebula fly-through screensaver for NVIDIA Shield. Vibe coded with Claude Sonnet 4.6, Opus 4.6/4.8, Fable 5, and GPT-5.5.
+A GPU-accelerated HDR nebula fly-through screensaver for Android phones and TV, optimized for the NVIDIA Shield. Vibe coded with Claude Sonnet 4.6, Opus 4.6/4.8, Fable 5, and GPT-5.5.
 
 ## What it looks like
 
-A deep-space nebula rendered in real-time volumetric raymarching on the GPU. The camera flies through translucent clouds of emissive gas, sculpted by a tiling 3D noise field with Worley erosion and lit by gradient relief, shell halos, and ionization-front rims, in a palette centred on deep violet and indigo with warm accents. Foreground masses occlude background stars with true depth; macro dust forms add broad light/dark structure without screen-space stencil shadows; dense star clusters glow as pointillistic distant galaxies, and the brightest stars throw aperiodic HDR flares with four-point diffraction spikes. A split-resolution pipeline keeps stars pin-sharp at native app-surface resolution while the gas runs at an adaptive lower resolution. Defaults to 45% maximum gas resolution and 25 fps for steady HDR playback on a NVIDIA Shield.
+A deep-space nebula rendered in real-time volumetric raymarching on the GPU. The camera flies through translucent clouds of emissive gas, sculpted by a tiling 3D noise field with Worley erosion and lit by gradient relief, shell halos, and ionization-front rims, in a palette centred on deep violet and indigo with warm accents. Foreground masses occlude background stars with true depth; macro dust forms add broad light/dark structure without screen-space stencil shadows; dense star clusters glow as pointillistic distant galaxies, and the brightest stars throw aperiodic HDR flares with four-point diffraction spikes. A split-resolution pipeline keeps stars pin-sharp at native app-surface resolution while the gas runs at an adaptive lower resolution. Defaults to 45% maximum gas resolution and 25 fps for steady HDR playback, and the star field scales to the surface so it looks right on both wide TV and tall phone displays.
 
 Designed for OLED and HDR displays — deep black voids between dramatic nebula ridges, with the brightest cores driven into real panel headroom. All elements are in continuous motion.
 
@@ -140,10 +140,10 @@ adb install --no-incremental Nebula.apk
 
 ## Compatibility
 
-- Android TV 5.0+ (API 21+), OpenGL ES 3.0
-- **Requires a powerful GPU** — the volumetric raymarcher is tuned for the NVIDIA Shield's Tegra X1 class hardware (~512 GFLOPS). Most other Android TV devices (Google TV Streamer, Chromecast, Walmart Onn, etc.) use Mali-G31 MP2 GPUs that are 30–80× weaker and cannot run the gas pass at any usable frame rate. The Shield is effectively the only mainstream Android TV box with enough GPU headroom for real-time volumetric rendering.
+- Android 5.0+ (API 21+), phone or TV, OpenGL ES 3.0
+- **Requires a powerful GPU** — the volumetric raymarcher is tuned for NVIDIA Shield-class (Tegra X1, ~512 GFLOPS) and modern flagship-phone hardware. Most other Android TV devices (Google TV Streamer, Chromecast, Walmart Onn, etc.) use Mali-G31 MP2 GPUs that are 30–80× weaker and cannot run the gas pass at any usable frame rate; among mainstream Android TV boxes the Shield has by far the most GPU headroom. Recent flagship phones (Snapdragon 8 Gen 3 / Adreno 750 and similar) run it comfortably.
 - Built against Android API 35 by default; compile SDK overrides must be API 29+ because the source uses modern HDR capability constants
-- Tested on NVIDIA Shield 2017 (Tegra X1, Android 11)
+- Tested on NVIDIA Shield 2017 (Tegra X1, Android 11) and Galaxy S24 (Adreno 750, Android 16)
 - HDR10 displays: colours are tuned for OLED — deep blacks with saturated violet highlights
 
 ## Diagnostics
