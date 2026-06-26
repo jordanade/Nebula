@@ -24,7 +24,6 @@ public class NebulaDream extends DreamService {
     private NebulaRenderer renderer;
     private DisplayDiagnostics displayDiag;
     private Consumer<Display> hdrRatioListener;
-    private float hdrBias = 1.0f;
 
     @Override
     public void onAttachedToWindow() {
@@ -35,7 +34,6 @@ public class NebulaDream extends DreamService {
         Prefs prefs = Prefs.from(this);
         DisplayDiagnostics display = DisplayDiagnostics.configure(this);
         displayDiag = display;
-        hdrBias = prefs.hdrBias();
         boolean wantHdr = !Prefs.HDR_OFF.equals(prefs.hdrMode());
 
         // Drive the panel for maximum highlight luminance: full screen
@@ -63,7 +61,7 @@ public class NebulaDream extends DreamService {
             }
         }
 
-        HdrTuning hdrTuning = HdrTuning.from(display.display, hdrBias);
+        HdrTuning hdrTuning = HdrTuning.from(display.display);
 
         glView = new GLSurfaceView(this);
         glView.setEGLContextClientVersion(3); // v4: GLES 3.0 for sampler3D + glTexImage3D
@@ -96,7 +94,7 @@ public class NebulaDream extends DreamService {
         if (!available) return;
         hdrRatioListener = disp -> {
             Log.i(TAG, "HDR ratio changed live=" + String.format("%.2f", disp.getHdrSdrRatio()));
-            HdrTuning t = HdrTuning.from(disp, hdrBias);
+            HdrTuning t = HdrTuning.from(disp);
             if (renderer != null) renderer.setHdrTuning(t);
         };
         d.registerHdrSdrRatioChangedListener(getMainExecutor(), hdrRatioListener);

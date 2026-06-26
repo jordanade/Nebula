@@ -49,25 +49,24 @@ final class HdrTuning {
         return Math.max(staticHeadroom, liveHeadroom);
     }
 
-    static HdrTuning from(Display display, float bias) {
-        return forHeadroom(headroomFor(display), bias);
+    static HdrTuning from(Display display) {
+        return forHeadroom(headroomFor(display));
     }
 
     /**
-     * Derives the tonemap knee/gain and star-flare peak from a raw headroom
-     * value scaled by the user's manual intensity bias (1.0 = neutral). The
-     * bias lets the brightest stars/flares be pushed to the panel ceiling on
-     * devices that under-report, or pulled back on ones that over-report.
+     * Derives the tonemap knee/gain and star-flare peak so the brightest
+     * above-knee highlights roll off to the display's full headroom — i.e. the
+     * panel's own peak luminance. There is no manual scaling: the auto-detected
+     * headroom is the ceiling, and the panel clamps anything beyond it.
      */
-    static HdrTuning forHeadroom(float rawHeadroom, float bias) {
-        float headroom = clamp(rawHeadroom * bias, MIN_HEADROOM, MAX_HEADROOM);
+    static HdrTuning forHeadroom(float rawHeadroom) {
+        float headroom = clamp(rawHeadroom, MIN_HEADROOM, MAX_HEADROOM);
         float knee = clamp(1.85f + (headroom - 4.0f) * 0.08f, 1.8f, 2.6f);
         float gain = clamp(4.5f + headroom * 0.9f, 7.0f, 16.0f);
         float starMax = clamp(headroom + Math.min(2.5f, Math.max(1.25f, headroom * 0.35f)),
             MIN_HEADROOM, MAX_HEADROOM);
         float starGain = clamp(gain * 1.35f, 8.5f, 22.0f);
         Log.i(TAG, "HDR tuning raw=" + String.format("%.2f", rawHeadroom)
-            + " bias=" + String.format("%.2f", bias)
             + " max=" + String.format("%.2f", headroom)
             + " knee=" + String.format("%.2f", knee)
             + " gain=" + String.format("%.2f", gain)
