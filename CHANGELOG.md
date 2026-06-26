@@ -2,6 +2,31 @@
 
 All notable changes to Nebula are documented here.
 
+## 4.7.1 — 2026-06-26
+
+Phone polish and burn-in fixes on top of 4.7.0. The Shield/TV output is
+unchanged — the new star and settings logic resolve to no-ops there.
+
+### Added
+- **DPI-aware star sizing** — on high-density panels the stars get a gentle,
+  sqrt-damped size boost on top of the width-relative scaling, so they no
+  longer look tiny on a phone held close. Anchored to the Shield's 320 dpi, so
+  the boost is exactly 1.0 there.
+
+### Changed
+- **Sprinkle stars now cross-fade** instead of sitting static — three offset
+  fields fade 120° apart, so no sprinkle pixel stays lit in place (burn-in)
+  without translating the sub-pixel dots, which would shimmer. Frame cost is
+  unchanged.
+- **Removed the HDR brightness setting** — the brightest above-knee highlights
+  always target the display's full headroom now; the manual bias could only
+  undershoot it.
+
+### Fixed
+- **Settings layout on phones and TV** — the preference list pads from the real
+  window inset, so the first row is no longer hidden under One UI's collapsing
+  title, nor gapped below the action bar on Android TV.
+
 ## 4.7.0 — 2026-06-24
 
 Nebula becomes a phone app as well as a TV app, with HDR brightness that adapts

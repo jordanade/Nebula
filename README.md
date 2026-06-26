@@ -6,7 +6,7 @@ A GPU-accelerated HDR nebula fly-through screensaver for Android phones and TV, 
 
 A deep-space nebula rendered in real-time volumetric raymarching on the GPU. The camera flies through translucent clouds of emissive gas, sculpted by a tiling 3D noise field with Worley erosion and lit by gradient relief, shell halos, and ionization-front rims, in a palette centred on deep violet and indigo with warm accents. Foreground masses occlude background stars with true depth; macro dust forms add broad light/dark structure without screen-space stencil shadows; dense star clusters glow as pointillistic distant galaxies, and the brightest stars throw aperiodic HDR flares with four-point diffraction spikes. A split-resolution pipeline keeps stars pin-sharp at native app-surface resolution while the gas runs at an adaptive lower resolution. Defaults to 45% maximum gas resolution and 25 fps for steady HDR playback, and the star field scales to the surface so it looks right on both wide TV and tall phone displays.
 
-Designed for OLED and HDR displays — deep black voids between dramatic nebula ridges, with the brightest cores driven into real panel headroom. All elements are in continuous motion.
+Designed for OLED and HDR displays — deep black voids between dramatic nebula ridges, with the brightest cores driven into real panel headroom. No pixel holds a static value: every element drifts, zooms, or cross-fades continuously.
 
 https://github.com/user-attachments/assets/183204a7-2d8e-4dca-860f-40bd0ad7b443
 
@@ -30,7 +30,7 @@ https://github.com/user-attachments/assets/183204a7-2d8e-4dca-860f-40bd0ad7b443
 - **Per-session random seed** — each screensaver activation randomises the camera path, nebula formation, and star field so no two sessions look alike
 - **HDR output** — opt-in FP16 scRGB-linear surface with feature detection and automatic SDR fallback; highlight cores use display-reported headroom while mid-tones keep the tuned SDR look
 - **GLES 3.0** — required for `sampler3D` / `glTexImage3D`; `highp` precision throughout prevents coordinate overflow artifacts at deep zoom levels
-- **Burn-in safe** — dual-axis coordinate rotation plus continuous inward zoom guarantees no pixel holds a static value; clouds, stars, and flares are all in perpetual motion
+- **Burn-in safe** — dual-axis coordinate rotation plus continuous inward zoom guarantees no pixel holds a static value; clouds, stars, and flares are all in perpetual motion, and the faint background sprinkles cross-fade between offset fields so they never hold a fixed pixel either
 
 ## Install
 

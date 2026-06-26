@@ -1,0 +1,1 @@
+Phone polish and burn-in fixes. Stars are sized for high-density phone screens, the faint sprinkle layer now cross-fades so no pixel stays lit, the settings layout is fixed on both phones and TV, and HDR highlights always target the display's full brightness. Shield/TV output is unchanged.

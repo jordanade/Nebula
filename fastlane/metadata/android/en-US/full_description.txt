@@ -8,7 +8,7 @@ Features:
 - Volumetric raymarching through a 3D noise field
 - HDR output with automatic SDR fallback
 - Configurable render resolution, frame rate, and zoom speed
-- Burn-in safe: all elements are in continuous motion
+- Burn-in safe: every element moves or cross-fades, so no pixel holds a static image
 - No network access, no ads, no tracking
 
 Optimized for the NVIDIA Shield and HDR displays, but runs on any Android phone or TV with a sufficiently powerful GPU.

@@ -20,9 +20,11 @@ final class DisplayDiagnostics {
     final String hdrCaps;
     final int targetWidth;
     final int targetHeight;
+    final int densityDpi;
 
     private DisplayDiagnostics(Display display, String requestedMode, String appMetrics,
-                               String realMetrics, String hdrCaps, int targetWidth, int targetHeight) {
+                               String realMetrics, String hdrCaps, int targetWidth, int targetHeight,
+                               int densityDpi) {
         this.display = display;
         this.requestedMode = requestedMode;
         this.appMetrics = appMetrics;
@@ -30,6 +32,7 @@ final class DisplayDiagnostics {
         this.hdrCaps = hdrCaps;
         this.targetWidth = targetWidth;
         this.targetHeight = targetHeight;
+        this.densityDpi = densityDpi;
     }
 
     static DisplayDiagnostics configure(DreamService service) {
@@ -65,7 +68,8 @@ final class DisplayDiagnostics {
         }
 
         DisplayDiagnostics diag = new DisplayDiagnostics(
-            display, requested, appMetrics, realMetrics, hdrCaps, targetWidth, targetHeight);
+            display, requested, appMetrics, realMetrics, hdrCaps, targetWidth, targetHeight,
+            densityDpi(display));
         Log.i(TAG, "DISPLAY startup requested=" + requested
             + " active=" + diag.activeMode()
             + " appMetrics=" + appMetrics
@@ -138,6 +142,13 @@ final class DisplayDiagnostics {
         if (real) display.getRealMetrics(dm);
         else display.getMetrics(dm);
         return dm.widthPixels + "x" + dm.heightPixels + "@" + dm.densityDpi + "dpi";
+    }
+
+    private static int densityDpi(Display display) {
+        if (display == null) return 0;
+        DisplayMetrics dm = new DisplayMetrics();
+        display.getMetrics(dm);
+        return dm.densityDpi;
     }
 
     private static String modeLabel(Display.Mode mode) {

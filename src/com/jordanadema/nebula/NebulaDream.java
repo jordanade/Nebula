@@ -147,7 +147,8 @@ public class NebulaDream extends DreamService {
         // Shield/TV config, so they are untouched), <1 on narrower surfaces so
         // stars grow (fewer, larger) to match the reference look.
         private static final float STAR_REF_WIDTH = 1920.0f;
-        private static final float STAR_SCALE_MIN = 0.45f;
+        private static final float STAR_REF_DPI = 320.0f; // Shield's density: dpiBoost = 1 there
+        private static final float STAR_SCALE_MIN = 0.30f;
         private static final float SZ_SPEED    = 0.0120f;
         private static final float SZ_MAX      = 0.75f;
         private static final float L0_OX = 0.0f,  L0_OY = 0.0f;
@@ -586,7 +587,15 @@ public class NebulaDream extends DreamService {
             "  vec2 scUv=sc+0.5;\n" +
             "  float spDn=vn(scUv*3.2+uSeed*2.0+vec2(5.7,3.1))*0.55+vn(scUv*8.5+uSeed*4.0+17.3)*0.45;\n" +
             "  float spDens=(SP_BASE+(1.0-SP_BASE)*smoothstep(SP_SS_LO,SP_SS_HI,spDn))*(1.0+sdD);\n" +
-            "  bg+=sprinkleLayer(scUv,SP_DEN,0.19,0.43,spDens);\n" +
+            // Three offset sprinkle fields cross-fade 120° apart over a slow
+            // cycle. The dots never translate (so no sub-pixel aliasing/shimmer),
+            // yet each field — and thus each lit pixel — fades fully dark for a
+            // third of the cycle, so nothing stays lit in place. The 120° spacing
+            // keeps the summed brightness near-constant (no global pulsing dip).
+            "  float spPh=uTime*0.26;\n" +
+            "  bg+=sprinkleLayer(scUv,SP_DEN,0.19,0.43,spDens)*max(0.0,sin(spPh));\n" +
+            "  bg+=sprinkleLayer(scUv,SP_DEN,0.67,0.21,spDens)*max(0.0,sin(spPh+2.0944));\n" +
+            "  bg+=sprinkleLayer(scUv,SP_DEN,0.41,0.83,spDens)*max(0.0,sin(spPh+4.1888));\n" +
             "  vec3 starSig=T*bg;\n" +
             // (deep-space floor moved to the gas pass with the haze)
             "  col+=starSig;\n" +
@@ -774,10 +783,18 @@ public class NebulaDream extends DreamService {
             screenW=w; screenH=h;
             GLES20.glViewport(0,0,w,h);
 
-            // Hold star pixel size constant relative to the reference width so a
-            // narrow phone surface doesn't render tiny stars. >= reference -> 1.0.
-            starScale = Math.max(STAR_SCALE_MIN, Math.min(1f, w / STAR_REF_WIDTH));
-            Log.i(TAG, "star scale=" + String.format("%.3f", starScale) + " surfaceW=" + w);
+            // Hold star pixel size constant relative to the reference width (so a
+            // narrow phone surface doesn't render tiny stars), then enlarge a bit
+            // more on high-density panels — pixel parity alone leaves stars
+            // physically small on a dense phone held close. The DPI term is
+            // sqrt-damped and clamped to >=1, so it only ever enlarges, and is
+            // exactly 1.0 at the Shield's 320 dpi reference (Shield unchanged).
+            int dpi = (display != null && display.densityDpi > 0) ? display.densityDpi : (int) STAR_REF_DPI;
+            float dpiBoost = (float) Math.max(1.0, Math.sqrt(dpi / STAR_REF_DPI));
+            float widthScale = Math.min(1f, w / STAR_REF_WIDTH);
+            starScale = Math.max(STAR_SCALE_MIN, widthScale / dpiBoost);
+            Log.i(TAG, "star scale=" + String.format("%.3f", starScale) + " surfaceW=" + w
+                + " dpi=" + dpi + " dpiBoost=" + String.format("%.2f", dpiBoost));
 
             gasScaleActive = initialGasScale(w, h);
             recreateGasTarget();
