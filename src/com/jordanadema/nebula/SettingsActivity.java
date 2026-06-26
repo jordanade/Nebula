@@ -9,8 +9,9 @@ import android.os.Bundle;
 import android.preference.Preference;
 import android.preference.PreferenceFragment;
 import android.provider.Settings;
-import android.util.TypedValue;
+import android.util.Log;
 import android.view.View;
+import android.view.WindowInsets;
 import android.widget.ListView;
 
 /**
@@ -32,7 +33,10 @@ public class SettingsActivity extends Activity {
     }
 
     public static class PrefsFragment extends PreferenceFragment
-            implements Preference.OnPreferenceClickListener {
+            implements Preference.OnPreferenceClickListener, View.OnApplyWindowInsetsListener {
+
+        private int basePaddingTop;
+
         @Override
         public void onCreate(Bundle savedInstanceState) {
             super.onCreate(savedInstanceState);
@@ -40,10 +44,13 @@ public class SettingsActivity extends Activity {
             findPreference("start_now").setOnPreferenceClickListener(this);
         }
 
-        // One UI overlays a tall collapsing title on top of the list, hiding
-        // the first category header and preference. Inset the list below the
-        // status bar + action bar so the top row (HDR output) is visible. No-op
-        // cost on AOSP/Android TV, where the insets resolve to ~0 overlap.
+        // On edge-to-edge layouts (Android 15+ with targetSdk 35, e.g. One UI)
+        // the preference list is drawn under the system bars and the title is
+        // overlaid onto its first row. Pad the list down by exactly the system
+        // top inset, which One UI reports large enough to also clear the
+        // collapsing title. Non-edge-to-edge platforms (Android TV / the Shield)
+        // report a zero top inset and already lay the list out below the action
+        // bar, so they get no padding and no gap. See onApplyWindowInsets.
         @Override
         public void onActivityCreated(Bundle savedInstanceState) {
             super.onActivityCreated(savedInstanceState);
@@ -52,18 +59,19 @@ public class SettingsActivity extends Activity {
             View list = root.findViewById(android.R.id.list);
             if (!(list instanceof ListView)) return;
 
-            int top = 0;
-            TypedValue tv = new TypedValue();
-            if (getActivity().getTheme().resolveAttribute(android.R.attr.actionBarSize, tv, true)) {
-                top += TypedValue.complexToDimensionPixelSize(tv.data, getResources().getDisplayMetrics());
-            }
-            int sbId = getResources().getIdentifier("status_bar_height", "dimen", "android");
-            if (sbId > 0) top += getResources().getDimensionPixelSize(sbId);
+            basePaddingTop = list.getPaddingTop();
+            ((ListView) list).setClipToPadding(false);
+            list.setOnApplyWindowInsetsListener(this);
+            list.requestApplyInsets();
+        }
 
-            ListView lv = (ListView) list;
-            lv.setClipToPadding(false);
-            lv.setPadding(lv.getPaddingLeft(), lv.getPaddingTop() + top,
-                lv.getPaddingRight(), lv.getPaddingBottom());
+        @Override
+        public WindowInsets onApplyWindowInsets(View v, WindowInsets insets) {
+            int sysTop = insets.getSystemWindowInsetTop();
+            Log.i("NebulaDream", "settings list top inset=" + sysTop);
+            v.setPadding(v.getPaddingLeft(), basePaddingTop + sysTop,
+                v.getPaddingRight(), v.getPaddingBottom());
+            return insets;
         }
 
         @Override
