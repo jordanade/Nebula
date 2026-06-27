@@ -1,4 +1,4 @@
-# Nebula
+# Nebula HDR screensaver
 
 A GPU-accelerated HDR nebula fly-through screensaver for Android phones and TV, optimized for the NVIDIA Shield. Vibe coded with Claude Sonnet 4.6, Opus 4.6/4.8, Fable 5, and GPT-5.5.
 
