@@ -1,171 +1,237 @@
 # Releasing Nebula
 
-This is the end-to-end procedure for cutting a versioned release and getting it
-onto F-Droid. Follow it exactly — two real releases were broken by skipping
-steps here (v4.7.0 was accidentally **debug-signed**; v4.6.8's first CI run
-failed because the signed APK was uploaded *after* CI ran).
+End-to-end procedure for cutting a versioned release and getting it onto F-Droid.
+**Follow it top to bottom, in order, without skipping.** Every warning box below
+is a real release that broke because someone skipped that exact step. If you do
+all of Steps 0–5 in sequence, it works on the first CI run.
 
 For one-off local builds (debug-signed, just to run on a device), see
 [README.md → Build from source](README.md#build-from-source). This document is
-only for **public releases** that must be reproducible and signed with the
-release key.
+only for **public releases** that must be reproducible and release-signed.
 
-## The two hard requirements
+---
 
-A Nebula release APK must satisfy both, or F-Droid will reject it:
+## Every way this has broken (read once)
 
-1. **Signed with the release key**, certificate SHA-256
+| Release | What broke | The rule it violates |
+|---------|-----------|----------------------|
+| v4.7.0 | Uploaded a **debug-signed** APK | Step 2 — always `SIGNING_MODE=release` |
+| v4.7.1 | Built from `main`, which was **ahead of the tag** → reproducibility mismatch | Step 2 — build from a clean checkout of the **tag** |
+| v4.7.1 | Forgot to bump `CurrentVersion` → `checkupdates` CI job failed | Step 5 — add build entry **and** bump CurrentVersion |
+| v4.6.8 | Triggered F-Droid CI **before** the APK was live on GitHub | Order — GitHub upload (Step 4) precedes fdroiddata (Step 5) |
+
+The two hard requirements F-Droid enforces, both or it rejects the build:
+
+1. **Release key.** Signer cert SHA-256 must be
    `878ec6cee21525482bd880c97bde14e1be71a27d581502f7326457daf6693639`
-   (`CN=Jordan Adema`). This is the value in `AllowedAPKSigningKeys` in the
-   fdroiddata metadata. Anything else — especially the auto-generated **debug**
-   key (`CN=Android Debug`) — is wrong and also breaks upgrades for anyone who
-   already installed a release build.
-2. **Reproducible**: when F-Droid's CI rebuilds the source unsigned and copies
-   your signature onto it, the result must be byte-identical and verify. This
-   is why `build.sh` signs with `--alignment-preserved true` (see `build.sh`)
-   — do not remove that flag or sign the APK with any other tool.
+   (`CN=Jordan Adema`) — the `AllowedAPKSigningKeys` value. The debug key
+   (`CN=Android Debug`) is wrong and also breaks upgrades for existing users.
+   `build.sh` self-checks this in release mode and aborts if it's wrong.
+2. **Reproducible.** F-Droid rebuilds the **tag** unsigned, copies your signature
+   onto it, and the result must be byte-identical and verify. This is why you
+   build from the tag (not `main`), with `TZ=UTC`, and never strip
+   `--alignment-preserved true` from `build.sh` or re-sign with another tool.
 
-## Prerequisites
+---
 
-- SDK with `build-tools;35.0.0` and `platforms;android-35` (see the README).
-- `release.keystore` at the repo root (gitignored, **never** committed).
-  Alias `nebula`. The store/key password is held by the maintainer and is
-  **not** stored in this repo — retrieve it before releasing.
-- `apksigcopier` for the reproducibility check: `pip3 install apksigcopier`.
-
-## Step 1 — Bump the version
-
-In `AndroidManifest.xml` bump both:
-
-- `android:versionCode` — integer, +1 every release (F-Droid keys builds on it).
-- `android:versionName` — e.g. `4.7.0`.
-
-Add a release note for F-Droid's "What's New" at
-`fastlane/metadata/android/en-US/changelogs/<versionCode>.txt` (e.g. `25.txt`),
-and update `CHANGELOG.md`. If the app's audience changed, update
-`fastlane/metadata/android/en-US/short_description.txt` (this is the F-Droid
-summary) and the README to match.
-
-Commit these, then tag the commit `vX.Y.Z`. **The tag commit is the one F-Droid
-builds** — its tree must be exactly what you release.
-
-## Step 2 — Build and RELEASE-sign
-
-> ⚠️ The trap that broke v4.7.0: `SIGNING_MODE` defaults to `auto`, which
-> **debug-signs** when `RELEASE_KEYSTORE` is unset. Always pass
-> `SIGNING_MODE=release` *and* the keystore vars for a release.
-
-> ⚠️ The trap that broke v4.7.1's CI: building from `main` instead of the **tag**.
-> F-Droid rebuilds from the tagged commit, so if `main` is ahead of the tag (e.g.
-> a later "Rename app" commit changed `app_name`), your uploaded APK's
-> `resources.arsc`/`classes.dex` won't match and the `fdroid build` job fails the
-> reproducibility check. **Always build from a clean checkout of the tag**, not
-> your working tree.
-
-Build from a throwaway worktree pinned to the tag (the keystore is gitignored, so
-copy it in):
+## Step 0 — Prerequisites (check once per machine)
 
 ```bash
 export ANDROID_HOME="$HOME/Library/Android/sdk"
+ls "$ANDROID_HOME/build-tools/35.0.0/apksigner"        # build-tools;35.0.0 present
+ls "$ANDROID_HOME/platforms/android-35/android.jar"    # platforms;android-35 present
+python3 -c "import apksigcopier" || pip3 install apksigcopier
+ls release.keystore                                     # at repo root, gitignored, alias 'nebula'
+```
 
-git worktree add /tmp/nebula-release vX.Y.Z       # exact tag, detached
-cp release.keystore /tmp/nebula-release/release.keystore
-cd /tmp/nebula-release
+The keystore store/key password is **not** in the repo — retrieve it from the
+maintainer (or the `release-signing` memory) before you start.
 
+---
+
+## Step 1 — Bump version, write notes, commit, tag
+
+In `AndroidManifest.xml` bump **both**:
+
+- `android:versionCode` — integer, +1 every release (F-Droid keys builds on it).
+- `android:versionName` — e.g. `4.7.2`.
+
+Then:
+
+- Add `fastlane/metadata/android/en-US/changelogs/<versionCode>.txt` (the F-Droid
+  "What's New", e.g. `27.txt`).
+- Update `CHANGELOG.md`.
+- If the audience/positioning changed, update
+  `fastlane/metadata/android/en-US/short_description.txt` (F-Droid summary) and
+  the README to match.
+
+Commit everything, then tag **that commit**:
+
+```bash
+git add -A && git commit -m "Release vX.Y.Z: <summary>"
+git tag vX.Y.Z
+git push && git push --tags
+```
+
+> ⚠️ The tag's tree is exactly what F-Droid builds. Do **not** keep committing to
+> `main` after tagging and then build from `main` — that is what broke v4.7.1.
+> Step 2 builds from the tag precisely so later `main` commits can't leak in.
+
+---
+
+## Step 2 — Build + verify from the tag (one fail-fast block)
+
+Copy-paste this whole block. It checks out the **tag** into a throwaway worktree,
+release-signs, and verifies **both** the signer fingerprint and reproducibility.
+It exits non-zero (and prints `FAILED`) if anything is wrong — do not proceed past
+a non-zero exit.
+
+```bash
+set -e
+export ANDROID_HOME="$HOME/Library/Android/sdk"
+APKSIGNER="$ANDROID_HOME/build-tools/35.0.0/apksigner"
+EXPECT_FP="878ec6cee21525482bd880c97bde14e1be71a27d581502f7326457daf6693639"
+TAG=vX.Y.Z                                  # <-- set this
+KSPASS='<release-keystore-password>'        # <-- set this
+REPO="$PWD"
+WT=/tmp/nebula-release
+
+# Clean checkout of the tag (keystore is gitignored, so copy it in).
+rm -rf "$WT"; git worktree prune
+git worktree add "$WT" "$TAG"
+cp "$REPO/release.keystore" "$WT/release.keystore"
+cd "$WT"
+
+# Release-sign. build.sh aborts itself if the signer fingerprint is wrong.
 RELEASE_KEYSTORE="$PWD/release.keystore" \
 RELEASE_KEY_ALIAS=nebula \
-RELEASE_KEYSTORE_PASS='<release-keystore-password>' \
-RELEASE_KEY_PASS='<release-keystore-password>' \
+RELEASE_KEYSTORE_PASS="$KSPASS" \
+RELEASE_KEY_PASS="$KSPASS" \
 TZ=UTC SIGNING_MODE=release ./build.sh
-```
 
-`TZ=UTC` is required for reproducibility (aapt writes timestamps). This produces
-a release-signed `Nebula.apk`. `build.sh` also self-verifies the signer
-fingerprint and aborts if it isn't the release key. After Step 3 verifies,
-`git worktree remove --force /tmp/nebula-release` (delete the copied keystore
-first).
+# (a) Signer fingerprint must be the release key.
+GOT_FP=$("$APKSIGNER" verify --print-certs Nebula.apk | awk '/SHA-256 digest/{print $NF}')
+[ "$GOT_FP" = "$EXPECT_FP" ] || { echo "FAILED: wrong signer $GOT_FP"; exit 1; }
 
-## Step 3 — Verify BEFORE uploading
-
-Both checks must pass. Do not upload an APK that fails either.
-
-```bash
-APKSIGNER="$ANDROID_HOME/build-tools/35.0.0/apksigner"
-
-# (a) Correct signer? Must print the release key fingerprint.
-"$APKSIGNER" verify --print-certs Nebula.apk | grep -i "SHA-256 digest"
-# expect: 878ec6cee21525482bd880c97bde14e1be71a27d581502f7326457daf6693639
-```
-
-```bash
-# (b) Reproducible? Build the unsigned APK F-Droid would build, copy the
-#     release signature onto it, and verify — exactly what F-Droid CI does.
+# (b) Reproducible: rebuild unsigned (what F-Droid does), copy the signature on,
+#     and require byte-identical + verify.
 cp Nebula.apk /tmp/release.apk
-TZ=UTC SIGNING_MODE=unsigned ./build.sh           # overwrites Nebula.apk (unsigned)
-python3 - <<'PY'
-import apksigcopier
-apksigcopier.do_copy('/tmp/release.apk', 'Nebula.apk', '/tmp/sigcp.apk',
+TZ=UTC SIGNING_MODE=unsigned ./build.sh >/dev/null
+python3 - <<'PY' || exit 1
+import apksigcopier, sys
+apksigcopier.do_copy('/tmp/release.apk','Nebula.apk','/tmp/sigcp.apk',
                      v1_only=None, exclude=apksigcopier.exclude_meta)
-a = open('/tmp/release.apk','rb').read(); b = open('/tmp/sigcp.apk','rb').read()
-print('round-trip:', 'IDENTICAL' if a == b else 'DIFFER  <-- NOT reproducible')
+a=open('/tmp/release.apk','rb').read(); b=open('/tmp/sigcp.apk','rb').read()
+sys.exit(0 if a==b else (print('FAILED: not reproducible') or 1))
 PY
-"$APKSIGNER" verify --verbose /tmp/sigcp.apk      # must say "Verifies"
+"$APKSIGNER" verify --verbose /tmp/sigcp.apk >/dev/null || { echo "FAILED: verify"; exit 1; }
+
+# Restore the signed APK (the unsigned rebuild overwrote it) and record its hash.
+cp /tmp/release.apk Nebula.apk
+echo "OK  fingerprint + reproducibility passed"
+echo "APK: $WT/Nebula.apk"
+shasum -a 256 Nebula.apk
 ```
 
-If the round-trip differs or verification fails, the build is not reproducible —
-stop and fix it (usually a tool-version or `--alignment-preserved` issue) rather
-than uploading. Then restore the signed APK: `cp /tmp/release.apk Nebula.apk`.
+If it printed `OK …`, the APK at `/tmp/nebula-release/Nebula.apk` is the artifact
+to ship. Keep that shell open (or note the path); the next steps use it.
 
-## Step 4 — Publish the GitHub release (do this BEFORE F-Droid)
+---
 
-> ⚠️ The trap that broke v4.6.8's first CI run: the F-Droid CI downloads the APK
-> from the GitHub release at build time. If you trigger F-Droid CI before the
-> correct APK is live, it verifies against a stale/missing/old asset and fails.
+## Step 3 — Publish the GitHub release (BEFORE F-Droid)
 
-1. Create/locate the GitHub release for the tag `vX.Y.Z`.
-2. Upload the verified `Nebula.apk` (from Step 3) as the release asset. The
-   `Binaries` URL in the fdroiddata metadata is
-   `…/releases/download/v%v/Nebula.apk`, so the asset **must** be named
-   `Nebula.apk`.
-3. Confirm the live asset matches what you verified:
-   `curl -sL <asset-url> | shasum -a 256`.
+> ⚠️ F-Droid CI downloads the APK from the GitHub release **at build time**. If
+> the correct asset isn't live first, CI verifies a stale/missing/old file and
+> fails. This broke v4.6.8. Always do this step before Step 5.
 
-## Step 5 — Update the F-Droid fdroiddata MR
+The asset **must** be named `Nebula.apk` (the `Binaries` URL is
+`…/releases/download/v%v/Nebula.apk`). From the worktree:
 
-The fork is checked out at `/private/tmp/fdroiddata` (remote
-`jadema1/fdroiddata`, branch `add-nebula`); MR is
-[fdroid/fdroiddata!40882](https://gitlab.com/fdroid/fdroiddata/-/merge_requests/40882).
-Mirror copy of the metadata lives in this repo at `fdroiddata-metadata.yml`.
+```bash
+cd /tmp/nebula-release
+gh release create vX.Y.Z Nebula.apk --repo jordanade/Nebula --title vX.Y.Z --notes "<notes>"
+#   …or, if the release already exists:
+gh release upload  vX.Y.Z Nebula.apk --repo jordanade/Nebula --clobber
 
-Add a build entry to `metadata/com.jordanadema.nebula.yml` and bump
-`CurrentVersion`/`CurrentVersionCode`:
+# Confirm the LIVE asset is byte-identical to what you verified.
+curl -sL https://github.com/jordanade/Nebula/releases/download/vX.Y.Z/Nebula.apk \
+  | shasum -a 256
+# ^ must equal the shasum printed at the end of Step 2
+```
+
+---
+
+## Step 4 — Tear down the worktree
+
+```bash
+cd /Users/jordan/Projects/nebula
+rm -f /tmp/nebula-release/release.keystore          # never leave the keystore lying around
+git worktree remove --force /tmp/nebula-release
+```
+
+---
+
+## Step 5 — Update the fdroiddata MR (LAST)
+
+Fork checkout: `/private/tmp/fdroiddata` (remote `jadema1/fdroiddata`, branch
+`add-nebula`). MR:
+[fdroid/fdroiddata!41455](https://gitlab.com/fdroid/fdroiddata/-/merge_requests/41455).
+A mirror of the metadata lives in this repo at `fdroiddata-metadata.yml` — keep
+it in sync.
+
+Edit `metadata/com.jordanadema.nebula.yml`. You must do **both**: append a build
+entry **and** bump `CurrentVersion`/`CurrentVersionCode`. Skipping the bump fails
+the `checkupdates` job (broke v4.7.1).
 
 ```yaml
-  - versionName: 4.7.0
-    versionCode: 25
-    commit: <FULL 40-char commit hash of the vX.Y.Z tag>
+  - versionName: X.Y.Z
+    versionCode: <N>
+    commit: <FULL 40-char hash of the vX.Y.Z tag>   # git rev-parse vX.Y.Z^{commit}
     output: Nebula.apk
     prebuild: sdkmanager "platforms;android-35" "build-tools;35.0.0"
     build: TZ=UTC SIGNING_MODE=unsigned ./build.sh
 ```
 
-> ⚠️ Use the **full 40-char commit hash**, never a short hash, tag, or branch —
-> the maintainer (linsui) requires this.
+```yaml
+# …at the bottom of the file:
+CurrentVersion: X.Y.Z
+CurrentVersionCode: <N>
+```
 
-Commit and push to `add-nebula`; this re-triggers the MR pipeline. Watch it go
-green (the `fdroid build` job must log
-`compared built binary to supplied reference binary successfully`). Poll with:
+> ⚠️ Use the **full 40-char commit hash** (`git rev-parse vX.Y.Z^{commit}`), never
+> a short hash, tag, or branch — the maintainer requires this.
+
+Sync the mirror, commit, push (pushing re-triggers the pipeline):
+
+```bash
+cp /private/tmp/fdroiddata/metadata/com.jordanadema.nebula.yml \
+   /Users/jordan/Projects/nebula/fdroiddata-metadata.yml
+git -C /private/tmp/fdroiddata add metadata/com.jordanadema.nebula.yml
+git -C /private/tmp/fdroiddata commit -m "Update com.jordanadema.nebula to X.Y.Z"
+git -C /private/tmp/fdroiddata push
+```
+
+Watch the pipeline go green — the `fdroid build` job must log
+`compared built binary to supplied reference binary successfully`:
 
 ```bash
 curl -s "https://gitlab.com/api/v4/projects/jadema1%2Ffdroiddata/pipelines?ref=add-nebula&order_by=id&sort=desc&per_page=1"
+# then list its jobs:
+PID=<id from above>
+curl -s "https://gitlab.com/api/v4/projects/jadema1%2Ffdroiddata/pipelines/$PID/jobs" \
+  | python3 -c "import sys,json;[print(j['name'],j['status']) for j in json.load(sys.stdin)]"
 ```
 
-## Checklist
+If the `fdroid build` job ever fails reproducibility, 99% of the time it's
+because the GitHub APK was built from the wrong tree (not the tag) or with the
+wrong toolchain — go back to Step 2 in a clean tag worktree.
 
-- [ ] versionCode/versionName bumped; changelog + summary updated
-- [ ] Commit tagged `vX.Y.Z`
-- [ ] Built with `SIGNING_MODE=release` (NOT debug)
-- [ ] Signer fingerprint == `878ec6ce…f6693639`
-- [ ] Reproducibility round-trip IDENTICAL and `apksigner verify` passes
-- [ ] Correct `Nebula.apk` uploaded to the GitHub release
-- [ ] fdroiddata MR updated with **full** commit hash; pipeline green
+---
+
+## One-glance checklist
+
+- [ ] **Step 1** versionCode + versionName bumped; changelog/summary written; commit **tagged** `vX.Y.Z`; pushed
+- [ ] **Step 2** Built from the **tag worktree**; block printed `OK` (fingerprint `878ec6ce…` + reproducible)
+- [ ] **Step 3** `Nebula.apk` uploaded to the GitHub release; live shasum == Step 2 shasum
+- [ ] **Step 4** Worktree + copied keystore removed
+- [ ] **Step 5** fdroiddata: build entry added **and** `CurrentVersion`/`Code` bumped; full 40-char hash; mirror synced; pushed; pipeline green
