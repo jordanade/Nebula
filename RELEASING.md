@@ -55,8 +55,22 @@ builds** — its tree must be exactly what you release.
 > **debug-signs** when `RELEASE_KEYSTORE` is unset. Always pass
 > `SIGNING_MODE=release` *and* the keystore vars for a release.
 
+> ⚠️ The trap that broke v4.7.1's CI: building from `main` instead of the **tag**.
+> F-Droid rebuilds from the tagged commit, so if `main` is ahead of the tag (e.g.
+> a later "Rename app" commit changed `app_name`), your uploaded APK's
+> `resources.arsc`/`classes.dex` won't match and the `fdroid build` job fails the
+> reproducibility check. **Always build from a clean checkout of the tag**, not
+> your working tree.
+
+Build from a throwaway worktree pinned to the tag (the keystore is gitignored, so
+copy it in):
+
 ```bash
 export ANDROID_HOME="$HOME/Library/Android/sdk"
+
+git worktree add /tmp/nebula-release vX.Y.Z       # exact tag, detached
+cp release.keystore /tmp/nebula-release/release.keystore
+cd /tmp/nebula-release
 
 RELEASE_KEYSTORE="$PWD/release.keystore" \
 RELEASE_KEY_ALIAS=nebula \
@@ -66,7 +80,10 @@ TZ=UTC SIGNING_MODE=release ./build.sh
 ```
 
 `TZ=UTC` is required for reproducibility (aapt writes timestamps). This produces
-a release-signed `Nebula.apk`.
+a release-signed `Nebula.apk`. `build.sh` also self-verifies the signer
+fingerprint and aborts if it isn't the release key. After Step 3 verifies,
+`git worktree remove --force /tmp/nebula-release` (delete the copied keystore
+first).
 
 ## Step 3 — Verify BEFORE uploading
 
