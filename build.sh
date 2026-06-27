@@ -131,6 +131,14 @@ case "$signing_mode" in
 
         "$APKSIGNER" sign --alignment-preserved true "$@" --out "$out_apk" "$bin_dir/nebula.aligned.apk"
         "$APKSIGNER" verify --verbose "$out_apk"
+
+        expected_fp="878ec6cee21525482bd880c97bde14e1be71a27d581502f7326457daf6693639"
+        actual_fp=$("$APKSIGNER" verify --print-certs "$out_apk" | grep "SHA-256 digest" | awk '{print $NF}')
+        if [ "$actual_fp" != "$expected_fp" ]; then
+            echo "WRONG SIGNING KEY: got $actual_fp, expected $expected_fp" >&2
+            rm -f "$out_apk"
+            exit 1
+        fi
         ;;
     debug)
         requireExec "$APKSIGNER" APKSIGNER
