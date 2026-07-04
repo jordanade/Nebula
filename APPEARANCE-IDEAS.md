@@ -26,7 +26,7 @@ drawn to.
 1. **Star-forming cores.** Where gas density peaks, add a bright emission
    term that blooms toward white-pink and rides the HDR boost so cores hit
    peak nits. Dark dust framing brilliant hearts is what makes real nebula
-   photos magical. *(Done on branch `star-forming-cores`.)*
+   photos magical. *(Shipped in 4.8.0.)*
 2. **Shooting stars.** A rare (every 1–3 min) meteor streak in the comp
    pass — moving line segment with fading tail, HDR-boosted head. Scheduled
    from Java like the existing flare scheduler. Highest wow per line of code.
@@ -36,17 +36,17 @@ drawn to.
 3. **Make flares rarer but bigger.** Minutes-long gaps, but a real
    diffraction burst when one fires (the `fl2*18.0` softening already scales
    this way). Rarity makes an event feel witnessed rather than rendered.
-   *(Done on branch: 40–180s gaps, 4–8s duration, 0.6 magnitude floor.)*
+   *(Shipped in 4.8.0: 40–180s gaps, 4–8s duration, 0.6 magnitude floor.)*
 4. **Lift the empty regions.** Raise far-field gain and/or add a very faint
    milky-way band (broad grainy luminance gradient via the existing haze
    machinery) so black regions have depth instead of absence. Keep subtle.
-   *(Done on branch: far-field 0.22→0.30 plus a drifting grainy band.)*
+   *(Shipped in 4.8.0: far-field 0.22→0.30 plus a drifting grainy band.)*
 5. **Occasional palette excursions.** Let `temp` wander to the ends of its
    range for a few minutes — a teal-and-gold scene, a rose-magenta scene —
    so long viewing sessions see genuinely different moods.
-   *(Done on branch: slow noise seed biases temp ±0.35 for minutes at a time.)*
+   *(Shipped in 4.8.0: slow noise seed biases temp ±0.35 for minutes at a time.)*
 6. **Distant galaxies.** Tiny elliptical smudges with brighter cores,
-   riding the star-zoom layers. *(Done on branch: a sparse procedural
+   riding the star-zoom layers. *(Shipped in 4.8.0: a sparse procedural
    field — rare cells of a coarse grid hold a small inclined galaxy with
    hashed rotation/inclination/size/brightness, zooming and cross-fading
    with the star layers as a permanent population. A single scheduled

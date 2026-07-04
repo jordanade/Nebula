@@ -1,0 +1,10 @@
+The "magical sky" release — a full visual overhaul of the star field and nebula:
+
+• Star-forming cores: the densest gas now ignites into brilliant white-pink hearts (HDR)
+• Realistic star colors: blackbody sequence, bright stars skew blue-white, faint ones warm
+• Distant galaxies: tiny inclined spirals drift among the stars
+• Star flares are now rare, long events instead of constant texture
+• Faint milky-way band gives empty sky depth and resolves into star grain
+• Slow palette moods: scenes occasionally drift warm-rose or deep blue
+• Fixed star shimmer (grid aliasing); twinkle is now genuinely chaotic, like real scintillation
+• Many more faint stars

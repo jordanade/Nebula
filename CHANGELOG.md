@@ -2,6 +2,50 @@
 
 All notable changes to Nebula are documented here.
 
+## 4.8.0 — 2026-07-04
+
+The "magical sky" release: a visual overhaul of the star field and nebula,
+driven by live capture sessions on the Shield. Same performance envelope —
+cadence and adaptive gas scale are unchanged.
+
+### Added
+- **Star-forming cores** — where the raymarched gas density peaks, emission
+  now blooms toward white-pink, gated by a very-low-frequency seed so only
+  some cloud masses ignite, with mid-frequency knots for internal structure.
+  Cores ride the HDR chain to peak nits: every scene has a luminous heart.
+- **Distant galaxy field** — rare cells of a coarse star-grid layer hold a
+  tiny inclined two-arm galaxy (hashed rotation, inclination, size,
+  brightness). Galaxies drift, grow, and cross-fade with the star-zoom
+  layers and are occluded by gas like stars.
+- **Milky-way band** — a broad, grainy luminance floor anchored to the view
+  direction lifts empty regions from flat black to faint depth; sprinkle-star
+  density rises inside it, so the band resolves into star grain where it is
+  brightest. Far-field nebula gain also raised (0.22 → 0.30).
+- **Palette excursions** — a very slow seed occasionally biases the whole
+  scene warm-rose or deep blue for minutes at a time, so long sessions see
+  genuinely different moods.
+
+### Changed
+- **Star colors follow the blackbody sequence** (M orange → B blue-white);
+  the green/pink palette is gone. Brightness biases temperature: the
+  brightest stars skew hot, the faint majority skews warm — as in a real sky.
+- **Star flares are rare events** — 40–180 s gaps (was 0.1–0.6 s), 4–8 s
+  duration, a 0.6 magnitude floor, and a wider bloom, so each flare reads as
+  witnessed rather than as texture.
+- **Twinkle is chaotic and fast** — a product of incommensurate sines plus a
+  slow drift replaces the metronomic pulse; rates raised to 0.6–1.4 Hz.
+  Modulates brightness only.
+- **Steeper faint-star counts** — magnitude hash to the 4th power and a
+  raised sprinkle floor (0.08 → 0.13): endless faint stars under the bright.
+
+### Fixed
+- **Star shimmer was grid aliasing** — star cores (~0.34 px sigma) and spike
+  cross-sections were far narrower than a screen pixel, so pixel-grid
+  alignment modulated their brightness as the zoom drifted them. Stars are
+  now convolved with a 0.5 px-sigma pixel gaussian (variances add) with
+  near-energy-conserving compensation: resolved stars keep their sharpness,
+  sub-pixel stars render as steady points.
+
 ## 4.7.1 — 2026-06-26
 
 Phone polish and burn-in fixes on top of 4.7.0. The Shield/TV output is
