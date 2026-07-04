@@ -537,7 +537,7 @@ public class NebulaDream extends DreamService {
             "float twinkleComp(){ return 1.0; }\n" +
             "float starTwinkle(vec2 cell,float lid,float mag){\n" +
             "  float seed=h1(cell+vec2(17.0+lid*13.0,31.0-lid*7.0));\n" +
-            "  float rate=mix(0.20,0.50,h1(cell+5.3+lid*1.7));\n" +
+            "  float rate=mix(0.08,0.20,h1(cell+5.3+lid*1.7));\n" + // lazy shimmer: 5-12.5s per cycle
             "  float ph=6.2831853*(seed+uTime*rate);\n" +
             "  float wave=sin(ph)*0.5+0.5;\n" +
             "  float comp=twinkleComp();\n" +
