@@ -45,7 +45,9 @@ drawn to.
    range for a few minutes — a teal-and-gold scene, a rose-magenta scene —
    so long viewing sessions see genuinely different moods.
    *(Done on branch: slow noise seed biases temp ±0.35 for minutes at a time.)*
-6. **A distant galaxy.** A tiny, slowly-passing elliptical smudge with a
-   brighter core, riding the star-zoom layers; one per several minutes.
-   *(Done on branch: inclined two-arm smudge scheduled every 1.5–3.5 min,
-   rides a star-zoom layer's fade/zoom envelope.)*
+6. **Distant galaxies.** Tiny elliptical smudges with brighter cores,
+   riding the star-zoom layers. *(Done on branch: a sparse procedural
+   field — rare cells of a coarse grid hold a small inclined galaxy with
+   hashed rotation/inclination/size/brightness, zooming and cross-fading
+   with the star layers as a permanent population. A single scheduled
+   galaxy was tried first and felt like it appeared out of nowhere.)*
