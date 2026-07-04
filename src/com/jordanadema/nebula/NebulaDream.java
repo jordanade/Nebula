@@ -159,7 +159,7 @@ public class NebulaDream extends DreamService {
         private static final float SP_DEN      = 800.0f;
         private static final float SP_CORE     = 1200.0f;
         private static final float SP_BRI      = 0.30f;
-        private static final float SP_BASE     = 0.08f;
+        private static final float SP_BASE     = 0.13f; // raised floor: endless faint stars beneath the bright ones
         private static final float SP_SS_LO    = 0.25f;
         private static final float SP_SS_HI    = 0.65f;
 
@@ -527,19 +527,27 @@ public class NebulaDream extends DreamService {
             "  return mix(mix(h1(i),h1(i+vec2(1,0)),u.x),\n" +
             "             mix(h1(i+vec2(0,1)),h1(i+vec2(1,1)),u.x),u.y);\n" +
             "}\n" +
-            "vec3 starCol(float h){\n" +
-            "  if(h<0.2) return vec3(0.55,0.78,1.00);\n" +
-            "  if(h<0.4) return vec3(0.45,1.00,1.00);\n" +
-            "  if(h<0.6) return vec3(1.00,1.00,1.00);\n" +
-            "  if(h<0.8) return vec3(1.00,0.62,0.88);\n" +
-            "  return      vec3(0.55,1.00,0.82);\n" +
+            // Blackbody sequence only — real stars are never green or pink.
+            // Runs M orange -> K -> G/F warm white -> A white -> B blue-white.
+            // Brightness biases temperature: the brightest stars skew hot/blue
+            // (giants), the faint majority skews warm — as in a real sky.
+            "vec3 starCol(float h,float mag){\n" +
+            "  float t=clamp(h*0.75+mag*0.55-0.15,0.0,1.0);\n" +
+            "  if(t<0.25) return mix(vec3(1.00,0.62,0.36),vec3(1.00,0.78,0.58),t*4.0);\n" +
+            "  if(t<0.50) return mix(vec3(1.00,0.78,0.58),vec3(1.00,0.94,0.86),(t-0.25)*4.0);\n" +
+            "  if(t<0.75) return mix(vec3(1.00,0.94,0.86),vec3(0.92,0.95,1.00),(t-0.50)*4.0);\n" +
+            "  return mix(vec3(0.92,0.95,1.00),vec3(0.72,0.82,1.00),(t-0.75)*4.0);\n" +
             "}\n" +
             "float twinkleComp(){ return 1.0; }\n" +
             "float starTwinkle(vec2 cell,float lid,float mag){\n" +
             "  float seed=h1(cell+vec2(17.0+lid*13.0,31.0-lid*7.0));\n" +
             "  float rate=mix(0.60,1.40,h1(cell+5.3+lid*1.7));\n" + // lively sparkle: 0.7-1.7s per cycle
             "  float ph=6.2831853*(seed+uTime*rate);\n" +
-            "  float wave=sin(ph)*0.5+0.5;\n" +
+            // Real scintillation is chaotic, not sinusoidal: a product of
+            // incommensurate sines gives irregular flashes and deep dips,
+            // plus a slow drift component underneath.
+            "  float w=sin(ph)*sin(ph*1.618+seed*7.0)*0.8+sin(ph*0.313+seed*3.0)*0.2;\n" +
+            "  float wave=w*0.5+0.5;\n" +
             "  float comp=twinkleComp();\n" +
             "  float amt=mix(0.85,0.40,mag)*comp;\n" +
             "  return 1.0+amt*(wave-0.5);\n" +
@@ -565,7 +573,7 @@ public class NebulaDream extends DreamService {
             "  if(h<thresh) return vec3(0.0);\n" +
             "  vec2 df=f-h2(cell+3.7);\n" +
             "  float d2=dot(df,df);\n" +
-            "  float hm=h1(cell+7.7); float mag=0.18+0.82*hm*hm*hm;\n" +
+            "  float hm=h1(cell+7.7); float mag=0.18+0.82*hm*hm*hm*hm;\n" + // 4th power: real counts pile up at the faint end
             "  vec2 fc=cell-vec2(uStarFlare.x,uStarFlare.y); float isFlare=step(abs(lid-uStarFlare.w),0.5)*(1.0-step(0.25,dot(fc,fc)));\n" +
             "  float fl=isFlare*uStarFlare.z;\n" +
             "  float fl2=fl*fl;\n" +
@@ -595,7 +603,7 @@ public class NebulaDream extends DreamService {
             "    float spV=exp(-sdf.x*sdf.x*kSp)*exp(-sdf.y*sdf.y*spTight)*spWn;\n" +
             "    spike=(spH+spV)*bri*bri*(0.14+0.32*tw);\n" +
             "  }\n" +
-            "  return starCol(h1(cell+9.1))*(core+halo+spike);\n" +
+            "  return starCol(h1(cell+9.1),mag)*(core+halo+spike);\n" +
             "}\n" +
             // Sparse galaxy field: a coarse grid (1/4 star density, so smudges
             // have room) where rare cells hold a small inclined two-arm galaxy —
@@ -630,7 +638,7 @@ public class NebulaDream extends DreamService {
             "  float core=max(0.0,1.0-d2*SP_CORE);\n" +
             "  core*=core;\n" +
             "  float b=core*SP_BRI;\n" +
-            "  vec3 sc=starCol(h1(cell+9.3));\n" +
+            "  vec3 sc=starCol(h1(cell+9.3),0.15);\n" +
             "  return sc*b;\n" +
             "}\n" +
             "void main(){\n" +
@@ -663,7 +671,14 @@ public class NebulaDream extends DreamService {
             "  float sdD=smoothstep(SD_SS_LO,SD_SS_HI,sdField); sdD*=sdD;\n" +
             "  vec2 scUv=sc+0.5;\n" +
             "  float spDn=vn(scUv*3.2+uSeed*2.0+vec2(5.7,3.1))*0.55+vn(scUv*8.5+uSeed*4.0+17.3)*0.45;\n" +
-            "  float spDens=(SP_BASE+(1.0-SP_BASE)*smoothstep(SP_SS_LO,SP_SS_HI,spDn))*(1.0+sdD);\n" +
+            // Milky-way band (same shape/drift as the gas pass's haze band): the
+            // real band IS faint stars, so sprinkle density rises inside it and
+            // the glow resolves into grain exactly where it's brightest.
+            "  vec2 buv=vUv*2.0-1.0; buv.x*=uRes.x/uRes.y;\n" +
+            "  vec3 brd=normalize(vec3(buv,1.5));\n" +
+            "  float bandPos=brd.y*1.9+0.30*brd.x+0.22*sin(uTime*0.0093);\n" +
+            "  float band=exp(-bandPos*bandPos*3.0);\n" +
+            "  float spDens=(SP_BASE+(1.0-SP_BASE)*smoothstep(SP_SS_LO,SP_SS_HI,spDn))*(1.0+sdD)*(1.0+band*1.2);\n" +
             // Three offset sprinkle fields cross-fade 120° apart over a slow
             // cycle. The dots never translate (so no sub-pixel aliasing/shimmer),
             // yet each field — and thus each lit pixel — fades fully dark for a
