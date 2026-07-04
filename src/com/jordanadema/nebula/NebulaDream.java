@@ -546,13 +546,15 @@ public class NebulaDream extends DreamService {
             "}\n" +
             "vec3 starLayer(vec2 uv,float den,float ox,float oy,float ca,float sa,float lid){\n" +
             "  vec2 gp=uv*den+vec2(ox,oy);\n" +
-            // Anti-alias floor: star cores are far narrower than a screen pixel
-            // (sigma ~0.34px at 1080p), so grid alignment used to modulate their
-            // sampled brightness — a shimmer that dwarfed the intentional
-            // twinkle. Clamp the gaussian to ~0.7px sigma; the energy term
-            // below keeps clamped (sub-pixel) stars from brightening.
+            // Anti-alias by pixel convolution: star cores are far narrower than
+            // a screen pixel (sigma ~0.34px at 1080p), so grid alignment used to
+            // modulate their sampled brightness — a shimmer that dwarfed the
+            // intentional twinkle. Model the pixel as a ~0.5px-sigma gaussian
+            // and convolve (variances add): resolved stars keep nearly their
+            // intrinsic sharpness, sub-pixel stars get a steady floor. The
+            // energy term below keeps widened stars from brightening.
             "  float pxc=max(fwidth(gp.x),fwidth(gp.y));\n" +
-            "  float kMax=1.0/(2.0*(0.70*pxc)*(0.70*pxc));\n" +
+            "  float kPix=1.0/(2.0*(0.50*pxc)*(0.50*pxc));\n" +
             "  vec2 cell=floor(gp),f=fract(gp);\n" +
             "  float h=h1(cell);\n" +
             "  if(h<STAR_FLOOR) return vec3(0.0);\n" +
@@ -576,7 +578,7 @@ public class NebulaDream extends DreamService {
             // energy compensation, which moves opposite the brightness wave
             // and muted the twinkle. Width still widens for flares.
             "  float kCore=2500.0/soft;\n" +
-            "  float kEff=min(kCore,kMax);\n" +
+            "  float kEff=(kCore*kPix)/(kCore+kPix);\n" +
             // ^0.75: mostly energy-conserving (kills alias shimmer) but lets a
             // resolved near star sit a touch brighter than its far clamped self.
             "  float core=exp(-d2*kEff)*bri*(1.0+twDelta*1.60)*pow(kEff/kCore,0.75);\n" +
@@ -587,7 +589,7 @@ public class NebulaDream extends DreamService {
             "  if(mag>SPIKE_THRESH||fl2>0.0001){\n" +
             "    vec2 sdf=vec2(ca*df.x+sa*df.y,-sa*df.x+ca*df.y);\n" +
             "    float spTight=32.0/((1.0+fl2*1.0)*max(0.45,1.0+twDelta*1.10));\n" +
-            "    float kSp=min(5000.0,kMax);\n" +
+            "    float kSp=(5000.0*kPix)/(5000.0+kPix);\n" +
             "    float spWn=sqrt(kSp/5000.0);\n" + // 1D energy term for the widened cross-section
             "    float spH=exp(-sdf.y*sdf.y*kSp)*exp(-sdf.x*sdf.x*spTight)*spWn;\n" +
             "    float spV=exp(-sdf.x*sdf.x*kSp)*exp(-sdf.y*sdf.y*spTight)*spWn;\n" +
