@@ -541,7 +541,7 @@ public class NebulaDream extends DreamService {
             "  float ph=6.2831853*(seed+uTime*rate);\n" +
             "  float wave=sin(ph)*0.5+0.5;\n" +
             "  float comp=twinkleComp();\n" +
-            "  float amt=mix(0.65,0.30,mag)*comp;\n" +
+            "  float amt=mix(0.85,0.40,mag)*comp;\n" +
             "  return 1.0+amt*(wave-0.5);\n" +
             "}\n" +
             "vec3 starLayer(vec2 uv,float den,float ox,float oy,float ca,float sa,float lid){\n" +
@@ -571,8 +571,11 @@ public class NebulaDream extends DreamService {
             "  float tw=starTwinkle(cell,lid,mag);\n" +
             "  float twDelta=tw-1.0;\n" +
             "  float soft=1.0+fl2*18.0;\n" +
-            "  float coreSoft=soft/max(0.52,1.0+twDelta*0.85);\n" +
-            "  float kCore=2500.0/coreSoft;\n" +
+            // Twinkle modulates brightness only. Width twinkle is meaningless
+            // for a clamped sub-pixel star, and worse: it routed through the
+            // energy compensation, which moves opposite the brightness wave
+            // and muted the twinkle. Width still widens for flares.
+            "  float kCore=2500.0/soft;\n" +
             "  float kEff=min(kCore,kMax);\n" +
             // ^0.75: mostly energy-conserving (kills alias shimmer) but lets a
             // resolved near star sit a touch brighter than its far clamped self.
