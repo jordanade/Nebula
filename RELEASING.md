@@ -19,6 +19,7 @@ only for **public releases** that must be reproducible and release-signed.
 | v4.7.1 | Built from `main`, which was **ahead of the tag** → reproducibility mismatch | Step 2 — build from a clean checkout of the **tag** |
 | v4.7.1 | Forgot to bump `CurrentVersion` → `checkupdates` CI job failed | Step 5 — add build entry **and** bump CurrentVersion |
 | v4.6.8 | Triggered F-Droid CI **before** the APK was live on GitHub | Order — GitHub upload (Step 4) precedes fdroiddata (Step 5) |
+| v4.8.0 | A CI workflow (`release.yml`) auto-created the release on tag push and attached a **debug-signed** APK, racing the verified upload | Step 3 — no CI may upload APK assets (workflow deleted 2026-07-04); always re-check the **live** shasum after uploading |
 
 The two hard requirements F-Droid enforces, both or it rejects the build:
 
@@ -171,60 +172,45 @@ git worktree remove --force /tmp/nebula-release
 
 ---
 
-## Step 5 — Update the fdroiddata MR (LAST)
+## Step 5 — F-Droid picks the release up automatically (verify, don't act)
 
-Fork checkout: `/private/tmp/fdroiddata` (remote `jadema1/fdroiddata`, branch
-`add-nebula`). MR:
-[fdroid/fdroiddata!41455](https://gitlab.com/fdroid/fdroiddata/-/merge_requests/41455).
-A mirror of the metadata lives in this repo at `fdroiddata-metadata.yml` — keep
-it in sync.
+Nebula's fdroiddata metadata has `UpdateCheckMode: Tags` +
+`AutoUpdateMode: Version`: the F-Droid **checkupdates bot** detects the new
+tag on its own, files its own MR, and an F-Droid maintainer merges it. That's
+how v4.7.0 and v4.7.1 shipped (e.g.
+[!41455](https://gitlab.com/fdroid/fdroiddata/-/merge_requests/41455) =
+"bot: Update Nebula to 26"). **There is nothing to submit manually — do not
+file an MR and do not edit the old `add-nebula` fork branch.**
 
-Edit `metadata/com.jordanadema.nebula.yml`. You must do **both**: append a build
-entry **and** bump `CurrentVersion`/`CurrentVersionCode`. Skipping the bump fails
-the `checkupdates` job (broke v4.7.1).
+The bot's build downloads `Nebula.apk` from the GitHub release and verifies it
+byte-for-byte against its own unsigned rebuild of the tag. That is why Steps
+2–3 (verified, reproducible APK live at the Binaries URL) must be complete
+before the bot runs — which they are, if you followed this guide in order.
 
-```yaml
-  - versionName: X.Y.Z
-    versionCode: <N>
-    commit: <FULL 40-char hash of the vX.Y.Z tag>   # git rev-parse vX.Y.Z^{commit}
-    output: Nebula.apk
-    prebuild: sdkmanager "platforms;android-35" "build-tools;35.0.0"
-    build: TZ=UTC SIGNING_MODE=unsigned ./build.sh
-```
-
-```yaml
-# …at the bottom of the file:
-CurrentVersion: X.Y.Z
-CurrentVersionCode: <N>
-```
-
-> ⚠️ Use the **full 40-char commit hash** (`git rev-parse vX.Y.Z^{commit}`), never
-> a short hash, tag, or branch — the maintainer requires this.
-
-Sync the mirror, commit, push (pushing re-triggers the pipeline):
+Within a day or two, confirm the bot saw the release:
 
 ```bash
-cp /private/tmp/fdroiddata/metadata/com.jordanadema.nebula.yml \
-   /Users/jordan/Projects/nebula/fdroiddata-metadata.yml
-git -C /private/tmp/fdroiddata add metadata/com.jordanadema.nebula.yml
-git -C /private/tmp/fdroiddata commit -m "Update com.jordanadema.nebula to X.Y.Z"
-git -C /private/tmp/fdroiddata push
+# CurrentVersionCode on fdroiddata master should reach the new versionCode
+curl -s "https://gitlab.com/api/v4/projects/fdroid%2Ffdroiddata/repository/files/metadata%2Fcom.jordanadema.nebula.yml/raw?ref=master" \
+  | grep -E 'CurrentVersion'
 ```
 
-Watch the pipeline go green — the `fdroid build` job must log
-`compared built binary to supplied reference binary successfully`:
+Once it has (the bot MR merged), sync the in-repo mirror and commit:
 
 ```bash
-curl -s "https://gitlab.com/api/v4/projects/jadema1%2Ffdroiddata/pipelines?ref=add-nebula&order_by=id&sort=desc&per_page=1"
-# then list its jobs:
-PID=<id from above>
-curl -s "https://gitlab.com/api/v4/projects/jadema1%2Ffdroiddata/pipelines/$PID/jobs" \
-  | python3 -c "import sys,json;[print(j['name'],j['status']) for j in json.load(sys.stdin)]"
+cd /Users/jordan/Projects/nebula
+curl -s "https://gitlab.com/api/v4/projects/fdroid%2Ffdroiddata/repository/files/metadata%2Fcom.jordanadema.nebula.yml/raw?ref=master" \
+  > fdroiddata-metadata.yml
+git add fdroiddata-metadata.yml && git commit -m "Sync fdroiddata metadata to vX.Y.Z"
 ```
 
-If the `fdroid build` job ever fails reproducibility, 99% of the time it's
-because the GitHub APK was built from the wrong tree (not the tag) or with the
-wrong toolchain — go back to Step 2 in a clean tag worktree.
+If nothing has happened after ~a week: search the bot's MRs
+(<https://gitlab.com/fdroid/fdroiddata/-/merge_requests?search=nebula>) for a
+failed pipeline. A reproducibility failure means the GitHub asset doesn't match
+the tag's tree or toolchain — go back to Step 2 in a clean tag worktree and
+re-upload. As a last resort, file a **fresh MR against fdroiddata master** with
+a manual build entry; the old manual-MR instructions live in this file's git
+history (pre-v4.8.0).
 
 ---
 
@@ -232,6 +218,6 @@ wrong toolchain — go back to Step 2 in a clean tag worktree.
 
 - [ ] **Step 1** versionCode + versionName bumped; changelog/summary written; commit **tagged** `vX.Y.Z`; pushed
 - [ ] **Step 2** Built from the **tag worktree**; block printed `OK` (fingerprint `878ec6ce…` + reproducible)
-- [ ] **Step 3** `Nebula.apk` uploaded to the GitHub release; live shasum == Step 2 shasum
+- [ ] **Step 3** `Nebula.apk` uploaded to the GitHub release; **live** shasum == Step 2 shasum
 - [ ] **Step 4** Worktree + copied keystore removed
-- [ ] **Step 5** fdroiddata: build entry added **and** `CurrentVersion`/`Code` bumped; full 40-char hash; mirror synced; pushed; pipeline green
+- [ ] **Step 5** checkupdates bot MR appeared + merged (verify `CurrentVersionCode` on fdroiddata master); `fdroiddata-metadata.yml` mirror synced
