@@ -166,6 +166,12 @@ public class NebulaDream extends DreamService {
         // Galaxy haze
         private static final float HAZE_MUL    = 0.22f;
 
+        // Star-forming cores: the densest gas hearts bloom toward white-pink
+        // and ride the HDR chain, giving frames a luminous focal point.
+        private static final float CORE_LO   = 0.46f;
+        private static final float CORE_HI   = 0.72f;
+        private static final float CORE_GAIN = 4.0f;
+
         // Star rendering
         private static final float SPIKE_THRESH = 0.65f;
 
@@ -197,7 +203,10 @@ public class NebulaDream extends DreamService {
             "#define SD_W_LO "    + SD_W_LO    + "\n" +
             "#define SD_W_HI "    + SD_W_HI    + "\n" +
             "#define SD_SS_LO "   + SD_SS_LO   + "\n" +
-            "#define SD_SS_HI "   + SD_SS_HI   + "\n";
+            "#define SD_SS_HI "   + SD_SS_HI   + "\n" +
+            "#define CORE_LO "    + CORE_LO    + "\n" +
+            "#define CORE_HI "    + CORE_HI    + "\n" +
+            "#define CORE_GAIN "  + CORE_GAIN  + "\n";
 
         private static final String COMP_DEFS =
             "#define SD_FREQ_LO "  + SD_FREQ_LO  + "\n" +
@@ -391,6 +400,19 @@ public class NebulaDream extends DreamService {
             "        float frontGrain=0.42+0.82*frontDetail;\n" +
             "        float shell=smoothstep(0.018,0.10,d)*(1.0-smoothstep(0.22,0.48,d));\n" +
             "        emit+=mix(tcol,vec3(1.0,0.48,0.90),0.30)*frontHalo*(d*0.20+shell*0.68)*frontGrain*0.35*nearAmt;\n" +
+            "      }\n" +
+            // STAR-FORMING CORE: the densest hearts glow white-pink. Gated by a
+            // very-low-frequency seed so only some masses ignite — a localized
+            // brilliance the eye is drawn to, not a global interior brightening.
+            // Added after relief (cores are self-luminous, not sunlit) but before
+            // distance falloff (deep cores still recede); dust still occludes.
+            "      float coreAmt=smoothstep(CORE_LO,CORE_HI,d);\n" +
+            "      if(coreAmt>0.001){\n" +
+            "        float coreGate=smoothstep(0.58,0.80,texture(uNoise,p*0.016+vec3(3.7,7.3,1.9)).r);\n" +
+            // Mid-frequency knots give the heart internal structure — a few
+            // brilliant clumps inside the dense mass, not an even wash.
+            "        float knot=smoothstep(0.52,0.82,texture(uNoise,p*0.30+vec3(1.3,4.1,6.2)).r);\n" +
+            "        emit+=mix(tcol,vec3(1.0,0.86,0.96),0.65)*coreAmt*coreAmt*coreAmt*coreGate*mix(0.25,1.0,knot)*CORE_GAIN*(1.0-0.50*dustOcc);\n" +
             "      }\n" +
             // Distance falloff: deep gas contributes progressively less, so the
             // mid/rear stack reads as faint depth, not an accumulated bright wall.
