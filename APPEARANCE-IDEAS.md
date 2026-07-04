@@ -26,18 +26,26 @@ drawn to.
 1. **Star-forming cores.** Where gas density peaks, add a bright emission
    term that blooms toward white-pink and rides the HDR boost so cores hit
    peak nits. Dark dust framing brilliant hearts is what makes real nebula
-   photos magical. *(In progress on branch `star-forming-cores`.)*
+   photos magical. *(Done on branch `star-forming-cores`.)*
 2. **Shooting stars.** A rare (every 1–3 min) meteor streak in the comp
    pass — moving line segment with fading tail, HDR-boosted head. Scheduled
    from Java like the existing flare scheduler. Highest wow per line of code.
+   *(Deferred: meteors are an atmospheric phenomenon, so they'd break the
+   in-nebula fiction — though twinkle and diffraction spikes already borrow
+   from the same ground-sky vocabulary, so this stays on the table.)*
 3. **Make flares rarer but bigger.** Minutes-long gaps, but a real
    diffraction burst when one fires (the `fl2*18.0` softening already scales
    this way). Rarity makes an event feel witnessed rather than rendered.
+   *(Done on branch: 40–180s gaps, 4–8s duration, 0.6 magnitude floor.)*
 4. **Lift the empty regions.** Raise far-field gain and/or add a very faint
    milky-way band (broad grainy luminance gradient via the existing haze
    machinery) so black regions have depth instead of absence. Keep subtle.
+   *(Done on branch: far-field 0.22→0.30 plus a drifting grainy band.)*
 5. **Occasional palette excursions.** Let `temp` wander to the ends of its
    range for a few minutes — a teal-and-gold scene, a rose-magenta scene —
    so long viewing sessions see genuinely different moods.
+   *(Done on branch: slow noise seed biases temp ±0.35 for minutes at a time.)*
 6. **A distant galaxy.** A tiny, slowly-passing elliptical smudge with a
    brighter core, riding the star-zoom layers; one per several minutes.
+   *(Done on branch: inclined two-arm smudge scheduled every 1.5–3.5 min,
+   rides a star-zoom layer's fade/zoom envelope.)*

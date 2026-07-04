@@ -182,6 +182,12 @@ public class NebulaDream extends DreamService {
         private static final float FLARE_GAP_MIN = 40.0f;
         private static final float FLARE_GAP_RNG = 140.0f;
 
+        // Distant galaxy: a tiny inclined spiral smudge rides one star-zoom
+        // layer every few minutes, drifting and growing gently until the
+        // layer's own envelope dissolves it.
+        private static final float GLX_GAP_MIN = 90.0f;
+        private static final float GLX_GAP_RNG = 120.0f;
+
         // Layer offsets for Java (matches shader L0/L1 constants)
         private static final float[][] LAYER_OFF = {
             {L0_OX, L0_OY}, {L1_OX, L1_OY}
@@ -514,6 +520,7 @@ public class NebulaDream extends DreamService {
             "uniform float uHdrStarGain;\n" +
             "uniform float uHdrStarMax;\n" +
             "uniform vec4 uStarFlare;\n" +
+            "uniform vec4 uGalaxy;\n" + // xy = grid pos, z = strength, w = layer
             "uniform vec2 uSeed;\n" +
             "uniform sampler2D uGas;\n" +
             "in vec2 vUv;\n" +
@@ -614,6 +621,23 @@ public class NebulaDream extends DreamService {
             "  vec2 s2=sr2/exp(t2*SZ_MAX)+0.5+uSeed;\n" +
             "  bg+=starLayer(s1,STAR_DEN*uStarScale,L0_OX,L0_OY,0.951,0.309,0.0)*f1;\n" +
             "  bg+=starLayer(s2,STAR_DEN*uStarScale,L1_OX,L1_OY,0.423,0.906,1.0)*f2;\n" +
+            // Distant galaxy: an inclined two-arm smudge with a warm core and a
+            // cool disk, drawn in the scheduled layer's grid space so it drifts,
+            // grows and fades with that layer — and gas occludes it like stars.
+            "  if(uGalaxy.z>0.001){\n" +
+            "    bool g0=uGalaxy.w<0.5;\n" +
+            "    vec2 ggp=(g0?s1:s2)*STAR_DEN*uStarScale+vec2(g0?L0_OX:L1_OX,g0?L0_OY:L1_OY);\n" +
+            "    vec2 gdf=(ggp-uGalaxy.xy)*1.4;\n" +
+            "    float gang=6.2831*h1(uGalaxy.xy);\n" +
+            "    vec2 grot=vec2(cos(gang)*gdf.x+sin(gang)*gdf.y,-sin(gang)*gdf.x+cos(gang)*gdf.y);\n" +
+            "    grot.y*=2.6;\n" +
+            "    float gr=length(grot);\n" +
+            "    float gcore=exp(-gr*gr*3.2);\n" +
+            "    float garm=0.72+0.28*cos(2.0*atan(grot.y,grot.x)+gr*2.4);\n" +
+            "    float gdisk=exp(-gr*1.7)*0.32*garm;\n" +
+            "    vec3 gcol=mix(vec3(0.72,0.80,1.00),vec3(1.00,0.90,0.78),gcore);\n" +
+            "    bg+=gcol*(gcore*0.85+gdisk)*(g0?f1:f2)*uGalaxy.z;\n" +
+            "  }\n" +
             "  vec2 sdUv=(f1>=f2)?s1:s2;\n" +
             "  float sdOx=(f1>=f2)?L0_OX:L1_OX; float sdOy=(f1>=f2)?L0_OY:L1_OY;\n" +
             "  vec2 sdGp=sdUv*STAR_DEN*uStarScale+vec2(sdOx,sdOy);\n" +
@@ -683,7 +707,7 @@ public class NebulaDream extends DreamService {
         private int progGas, gAPos, gUTime, gURes, gUNoise, gUZoom, gUSeed, gUStarScale;
         // Pass 2 (composite, native res): program + locations
         private int progComp, cAPos, cUTime, cURes, cUZoom, cUHdr, cUHdrKnee, cUHdrGain, cUHdrMax,
-            cUHdrStarGain, cUHdrStarMax, cUStarFlare, cUSeed, cUGas, cUStarScale;
+            cUHdrStarGain, cUHdrStarMax, cUStarFlare, cUGalaxy, cUSeed, cUGas, cUStarScale;
         private int noiseTex;            // v4: 3D noise texture
         private int gasFbo, gasTex;      // v4: low-res gas render target
         private int gasW, gasH;
@@ -694,6 +718,10 @@ public class NebulaDream extends DreamService {
         private float sfStart = -1f, sfDur, sfMag, sfEnv, sfNext = 3f;
         private int sfLayer;
         private float sfCellX, sfCellY;
+        // Distant-galaxy scheduling state
+        private float glxNext = 20f, glxEnd = -1f, glxStr;
+        private int glxLayer;
+        private float glxCellX, glxCellY;
 
         private static float cpuFract(float x) { return x - (float)Math.floor(x); }
         private static float cpuH1(float ix, float iy) {
@@ -793,6 +821,7 @@ public class NebulaDream extends DreamService {
             cUHdrStarMax = GLES20.glGetUniformLocation(progComp,"uHdrStarMax");
             cUSeed   = GLES20.glGetUniformLocation(progComp,"uSeed");
             cUStarFlare = GLES20.glGetUniformLocation(progComp,"uStarFlare");
+            cUGalaxy = GLES20.glGetUniformLocation(progComp,"uGalaxy");
             cUGas    = GLES20.glGetUniformLocation(progComp,"uGas");
             cUStarScale = GLES20.glGetUniformLocation(progComp,"uStarScale");
 
@@ -917,6 +946,9 @@ public class NebulaDream extends DreamService {
             GLES20.glUniform1f(cUHdrStarMax,tuning.starMax);
             updateFlare(t);
             GLES20.glUniform4f(cUStarFlare, sfCellX, sfCellY, sfEnv * sfMag, (float)sfLayer);
+            updateGalaxy(t);
+            GLES20.glUniform4f(cUGalaxy, glxCellX, glxCellY,
+                (glxEnd > 0f && t < glxEnd) ? glxStr : 0f, (float)glxLayer);
             GLES20.glActiveTexture(GLES20.GL_TEXTURE0);
             GLES20.glBindTexture(GLES20.GL_TEXTURE_2D,gasTex);
             GLES20.glUniform1i(cUGas,0);
@@ -970,6 +1002,42 @@ public class NebulaDream extends DreamService {
                 float s = (float)Math.sin(Math.PI * p);
                 sfEnv = s * s;
             }
+        }
+
+        // Schedule the distant galaxy onto whichever star-zoom layer is early
+        // in its visibility cycle, so the smudge gets a long life: it rides
+        // the layer's fade/zoom envelope and dissolves with it. Placement is
+        // biased toward the view centre so the outward zoom drift doesn't
+        // carry it off screen before the layer fades.
+        private void updateGalaxy(float t) {
+            if (t < glxNext) return;
+            float rate = SZ_SPEED * zoomMul;
+            float sph = t * rate;
+            int pick = -1; float bestRemain = -1f;
+            for (int i = 0; i < LAYER_OFF.length; i++) {
+                float ti = sph + LAYER_PHASE[i];
+                ti -= (float)Math.floor(ti);
+                if (ti < 0.12f || ti > 0.55f) continue;
+                float remain = 0.88f - ti;
+                if (remain > bestRemain) { bestRemain = remain; pick = i; }
+            }
+            if (pick < 0) { glxNext = t + 5f; return; } // between windows; retry
+            glxLayer = pick;
+            float lox = LAYER_OFF[pick][0], loy = LAYER_OFF[pick][1];
+            float lti = sph + LAYER_PHASE[pick];
+            lti -= (float)Math.floor(lti);
+            float zoom = (float)Math.exp(lti * SZ_MAX);
+            float den = STAR_DEN * starScale;
+            float halfSpanX = (den / 2f) / zoom * 0.55f;
+            float aspect = screenH > 0 ? (float)screenH / screenW : 0.5625f;
+            glxCellX = (0.5f + seedX) * den + lox + (sfRng.nextFloat()*2f-1f) * halfSpanX;
+            glxCellY = (0.5f + seedY) * den + loy + (sfRng.nextFloat()*2f-1f) * halfSpanX * aspect;
+            glxStr = 0.55f + 0.35f * sfRng.nextFloat();
+            glxEnd = t + bestRemain / rate;
+            glxNext = glxEnd + GLX_GAP_MIN + sfRng.nextFloat() * GLX_GAP_RNG;
+            Log.i(TAG, "GALAXY pos=" + glxCellX + "," + glxCellY + " layer=" + glxLayer
+                + " str=" + String.format("%.2f", glxStr)
+                + " dur=" + String.format("%.1f", bestRemain / rate) + "s");
         }
 
         private float initialGasScale(int w, int h) {
