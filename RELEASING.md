@@ -187,24 +187,21 @@ byte-for-byte against its own unsigned rebuild of the tag. That is why Steps
 2–3 (verified, reproducible APK live at the Binaries URL) must be complete
 before the bot runs — which they are, if you followed this guide in order.
 
-Within a day or two, confirm the bot saw the release:
+The in-repo mirror `fdroiddata-metadata.yml` syncs itself: the
+`sync-fdroid-metadata.yml` workflow fetches upstream master daily and commits
+only when it changed. **The release is finished after Step 4 — there is no
+follow-up visit.** A "Sync fdroiddata metadata (upstream CurrentVersion
+X.Y.Z)" commit appearing on `main` within a day or two is your confirmation
+that the bot picked the release up.
+
+If no such commit has appeared after ~a week: check the mirror manually,
 
 ```bash
-# CurrentVersionCode on fdroiddata master should reach the new versionCode
 curl -s "https://gitlab.com/api/v4/projects/fdroid%2Ffdroiddata/repository/files/metadata%2Fcom.jordanadema.nebula.yml/raw?ref=master" \
   | grep -E 'CurrentVersion'
 ```
 
-Once it has (the bot MR merged), sync the in-repo mirror and commit:
-
-```bash
-cd /Users/jordan/Projects/nebula
-curl -s "https://gitlab.com/api/v4/projects/fdroid%2Ffdroiddata/repository/files/metadata%2Fcom.jordanadema.nebula.yml/raw?ref=master" \
-  > fdroiddata-metadata.yml
-git add fdroiddata-metadata.yml && git commit -m "Sync fdroiddata metadata to vX.Y.Z"
-```
-
-If nothing has happened after ~a week: search the bot's MRs
+then search the bot's MRs
 (<https://gitlab.com/fdroid/fdroiddata/-/merge_requests?search=nebula>) for a
 failed pipeline. A reproducibility failure means the GitHub asset doesn't match
 the tag's tree or toolchain — go back to Step 2 in a clean tag worktree and
@@ -220,4 +217,4 @@ history (pre-v4.8.0).
 - [ ] **Step 2** Built from the **tag worktree**; block printed `OK` (fingerprint `878ec6ce…` + reproducible)
 - [ ] **Step 3** `Nebula.apk` uploaded to the GitHub release; **live** shasum == Step 2 shasum
 - [ ] **Step 4** Worktree + copied keystore removed
-- [ ] **Step 5** checkupdates bot MR appeared + merged (verify `CurrentVersionCode` on fdroiddata master); `fdroiddata-metadata.yml` mirror synced
+- [ ] **Step 5** nothing to do — the mirror-sync workflow's "Sync fdroiddata metadata" commit (within a day or two) confirms the bot shipped it
