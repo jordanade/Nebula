@@ -175,11 +175,12 @@ public class NebulaDream extends DreamService {
         // Star rendering
         private static final float SPIKE_THRESH = 0.65f;
 
-        // Flare scheduling
-        private static final float FLARE_DUR_MIN = 1.5f;
-        private static final float FLARE_DUR_RNG = 2.0f;
-        private static final float FLARE_GAP_MIN = 0.1f;
-        private static final float FLARE_GAP_RNG = 0.5f;
+        // Flare scheduling: rare events, not texture. Minutes-long gaps, and
+        // every flare that does fire is long and bright enough to be witnessed.
+        private static final float FLARE_DUR_MIN = 4.0f;
+        private static final float FLARE_DUR_RNG = 4.0f;
+        private static final float FLARE_GAP_MIN = 40.0f;
+        private static final float FLARE_GAP_RNG = 140.0f;
 
         // Layer offsets for Java (matches shader L0/L1 constants)
         private static final float[][] LAYER_OFF = {
@@ -331,7 +332,12 @@ public class NebulaDream extends DreamService {
             // nebula colour: v3.1's purple-centred 4-stop palette, driven by a
             // drifting large-scale region field (warm accents stay rare).
             "  float reg=texture(uNoise,vec3(uv*0.35,uTime*0.02)).r;\n" +
-            "  float temp=clamp((reg-0.5)*1.5+0.60,0.0,1.0);\n" +
+            // Palette excursion: a very slow seed occasionally pushes the whole
+            // scene warm-rose or deep blue for a few minutes, so a long session
+            // sees genuinely different moods, not one constant violet.
+            "  float excN=texture(uNoise,vec3(uTime*0.0011+uSeed.x,0.73,0.29)).r;\n" +
+            "  float tempBias=0.35*(1.0-smoothstep(0.20,0.38,excN))-0.35*smoothstep(0.62,0.80,excN);\n" +
+            "  float temp=clamp((reg-0.5)*1.5+0.60+tempBias,0.0,1.0);\n" +
             "  vec3 warm=vec3(1.00,0.44,0.16);\n" +  // orange/red (rare warm accent)
             "  vec3 pink=vec3(0.96,0.28,0.60);\n" +  // magenta-pink
             "  vec3 midc=vec3(0.49,0.14,0.94);\n" +  // deep violet
@@ -474,9 +480,16 @@ public class NebulaDream extends DreamService {
             "  farD3=pow(farD3,2.0);\n" +
             "  float farShape=farD*0.45+farD2*0.35+farD3*0.20;\n" +
             "  float farReg=texture(uNoise,vec3(pFar.xy*0.03,uTime*0.01)).r;\n" +
-            "  float farTemp=clamp((farReg-0.5)*1.4+0.55,0.0,1.0);\n" +
+            "  float farTemp=clamp((farReg-0.5)*1.4+0.55+tempBias*0.8,0.0,1.0);\n" +
             "  vec3 farCol=(farTemp<0.5)?mix(pink,midc,farTemp/0.5):mix(midc,cool,(farTemp-0.5)/0.5);\n" +
-            "  col+=T*farCol*farShape*0.22;\n" +
+            "  col+=T*farCol*farShape*0.30;\n" +
+            // Milky-way band: a broad, grainy luminance floor anchored to the
+            // view direction, drifting slowly. Empty sky reads as faint depth
+            // instead of flat black; kept well below the gas and haze.
+            "  float bandPos=rd.y*1.9+0.30*rd.x+0.22*sin(uTime*0.0093);\n" +
+            "  float band=exp(-bandPos*bandPos*3.0);\n" +
+            "  float bandGrain=texture(uNoise,vec3(rd.xy*1.2+uSeed,0.37)+vec3(uTime*0.0021)).r;\n" +
+            "  col+=T*vec3(0.16,0.15,0.26)*band*(0.35+0.65*bandGrain)*0.12;\n" +
             "  col+=T*hz;\n" +
             "  fragColor=vec4(col,T);\n" +
             "}\n";
@@ -555,7 +568,7 @@ public class NebulaDream extends DreamService {
             "  float core=exp(-d2*2500.0/coreSoft)*bri*(1.0+twDelta*1.60);\n" +
             "  float eh=exp(-d2*100.0);\n" +
             "  float halo=eh*mag*0.15*(0.74+0.26*tw);\n" +
-            "  if(fl2>0.0001) halo+=exp(-d2*40.0)*fl2*0.6;\n" +
+            "  if(fl2>0.0001) halo+=exp(-d2*40.0)*fl2*0.9+exp(-d2*12.0)*fl2*0.30;\n" +
             "  float spike=0.0;\n" +
             "  if(mag>SPIKE_THRESH||fl2>0.0001){\n" +
             "    vec2 sdf=vec2(ca*df.x+sa*df.y,-sa*df.x+ca*df.y);\n" +
@@ -920,7 +933,8 @@ public class NebulaDream extends DreamService {
 
         private void updateFlare(float t) {
             if (t >= sfNext) {
-                sfMag = (float)Math.sqrt(sfRng.nextFloat());
+                // Rare flares must all be significant; floor the magnitude.
+                sfMag = 0.6f + 0.4f*(float)Math.sqrt(sfRng.nextFloat());
                 sfDur = FLARE_DUR_MIN + sfRng.nextFloat() * FLARE_DUR_RNG;
                 sfStart = t;
                 float sph = t * SZ_SPEED * zoomMul;
