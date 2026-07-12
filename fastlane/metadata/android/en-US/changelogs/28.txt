@@ -1,0 +1,9 @@
+Rare events land, warm scenes glow:
+
+• Nova: once in a rare while, one star swells to a brilliant point, holds, and fades white to amber over half a minute
+• Showpiece galaxies: occasionally a much larger galaxy with a warm core and dust lane drifts through
+• Galaxies now hang nearly still while stars stream past (they're at infinity), and the common smudges gained real structure
+• Warm scenes glow amber-gold instead of muddy brown
+• Star-forming cores actually ignite now
+• The milky-way band is brighter, resolves into dense star grain, and carries a dark dust rift and star clouds like the real one
+• Fixed dark speckle in dense gas

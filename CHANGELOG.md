@@ -2,6 +2,60 @@
 
 All notable changes to Nebula are documented here.
 
+## 4.9.0 — 2026-07-12
+
+Follow-up to the 4.8.0 capture review: rare events land, warm scenes glow.
+Same performance envelope (cadence and adaptive gas scale unchanged).
+
+### Added
+- **Nova** — the rarest event: one star swells to a brilliant HDR point over
+  ~2 s, holds, and fades over ~25 s while sliding white → amber, with a tight
+  glow and slender diffraction spikes rendered as an unclipped screen-space
+  overlay — the brightest star in the sky, not a searchlight. First one
+  within ~6–18 min of a session, then 20–60 min apart.
+- **Showpiece galaxies** — a second, far rarer galaxy tier on a coarser grid:
+  3–4× larger, with inner-disk arm structure, a warm core, and a dark dust
+  lane. Roughly one drifts through view every ~10 minutes.
+
+### Changed
+- **Warm scenes glow gold instead of brown** — the warm palette stop is now
+  amber-gold, emission is boosted toward the warm end, and the ambient term
+  follows the region colour there (fixed violet ambient greyed dim orange
+  into mud).
+- **Small-tier galaxies share the showpiece recipe** — tighter nucleus,
+  inter-arm gaps, brighter slower-falloff disk, a mild dust lane, and less
+  edge-on bias: the common smudges now resolve into structured disks at 1:1
+  instead of featureless ovals. Overall gain raised ~1.5× to compensate for
+  the light the arm gaps removed. Arm modulation fades with radius (both
+  tiers) — structure lives in the inner disk and the outskirts relax to a
+  smooth halo; crisp long S-arms read as corny.
+- **Galaxies show near-zero parallax** — both galaxy tiers now ride their
+  own zoom phase at a quarter of the star speed: galaxies are effectively at
+  infinity, so they hang nearly still while stars stream past, cross-fading
+  over ~5-minute cycles instead of ~80 s. (Truly static would freeze the
+  composition forever.)
+- **Star-forming cores actually appear** — the density threshold and the
+  regional gate are looser, and the gate has a 0.12 floor so every dense
+  heart carries some inner light while gated regions still blaze at full
+  gain. (In 4.8.0 the triple-gated cores effectively never fired.)
+- **Milky-way band is visible and structured** — glow gain raised
+  (0.12 → 0.30, panel-judged; the band floor sits below the HDR knee, so the
+  linear FP16 path renders it far dimmer than SDR grabs suggest), tinted
+  near-neutral-warm, and in-band sprinkle stars are both denser (boost
+  1.2 → 7.0) and brighter (×1.8 at band core): the band reads as a river of
+  resolved faint stars, with the glow as a floor underneath rather than the
+  identity.
+  Matched against ESO's all-sky panorama, the band also gained a meandering
+  dark rift along its centerline and slow amplitude variation along its
+  length (star clouds + taper) — computed identically in both passes so the
+  star grain dips in the rift and swells in the clouds in register with the
+  glow. A smooth constant-width gaussian was the giveaway before.
+
+### Fixed
+- **Dark stipple in dense mid-distance gas** — the anti-banding dither now
+  fades out with density instead of distance alone, so it no longer
+  accumulates into speckle inside dense masses.
+
 ## 4.8.0 — 2026-07-04
 
 The "magical sky" release: a visual overhaul of the star field and nebula,

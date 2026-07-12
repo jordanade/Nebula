@@ -168,7 +168,7 @@ public class NebulaDream extends DreamService {
 
         // Star-forming cores: the densest gas hearts bloom toward white-pink
         // and ride the HDR chain, giving frames a luminous focal point.
-        private static final float CORE_LO   = 0.46f;
+        private static final float CORE_LO   = 0.40f;
         private static final float CORE_HI   = 0.72f;
         private static final float CORE_GAIN = 4.0f;
 
@@ -181,6 +181,17 @@ public class NebulaDream extends DreamService {
         private static final float FLARE_DUR_RNG = 4.0f;
         private static final float FLARE_GAP_MIN = 40.0f;
         private static final float FLARE_GAP_RNG = 140.0f;
+
+        // Nova scheduling: the rarest event. One star swells to a brilliant HDR
+        // point (~2s rise), holds, and fades over ~25s with a white->amber
+        // shift. First one arrives within ~6-18 min so a normal session sees
+        // one; after that, 20-60 min apart.
+        private static final float NOVA_DUR_MIN   = 24.0f;
+        private static final float NOVA_DUR_RNG   = 10.0f;
+        private static final float NOVA_GAP_MIN   = 1200.0f;
+        private static final float NOVA_GAP_RNG   = 2400.0f;
+        private static final float NOVA_FIRST_MIN = 360.0f;
+        private static final float NOVA_FIRST_RNG = 720.0f;
 
         // Layer offsets for Java (matches shader L0/L1 constants)
         private static final float[][] LAYER_OFF = {
@@ -338,7 +349,7 @@ public class NebulaDream extends DreamService {
             "  float excN=texture(uNoise,vec3(uTime*0.0011+uSeed.x,0.73,0.29)).r;\n" +
             "  float tempBias=0.35*(1.0-smoothstep(0.20,0.38,excN))-0.35*smoothstep(0.62,0.80,excN);\n" +
             "  float temp=clamp((reg-0.5)*1.5+0.60+tempBias,0.0,1.0);\n" +
-            "  vec3 warm=vec3(1.00,0.44,0.16);\n" +  // orange/red (rare warm accent)
+            "  vec3 warm=vec3(1.00,0.60,0.24);\n" +  // amber-gold (rare warm accent; redder stops went brown at low emission)
             "  vec3 pink=vec3(0.96,0.28,0.60);\n" +  // magenta-pink
             "  vec3 midc=vec3(0.49,0.14,0.94);\n" +  // deep violet
             "  vec3 cool=vec3(0.31,0.50,1.00);\n" +  // blue
@@ -346,7 +357,12 @@ public class NebulaDream extends DreamService {
             "             : (temp<0.66) ? mix(pink,midc,(temp-0.33)/0.33)\n" +
             "                           : mix(midc,cool,(temp-0.66)/0.34);\n" +
             "  vec3 sunCol=tcol;\n" +
-            "  vec3 ambCol=mix(vec3(0.09,0.07,0.24),tcol*0.30,0.40);\n" + // violet ambient tinted toward the region colour
+            // Warm regions only read as luminous gold, never as dim brown: boost
+            // emission toward the warm end, and let the ambient follow the region
+            // colour there (fixed violet ambient greyed dim orange into mud).
+            "  float warmSide=smoothstep(0.10,0.45,temp);\n" +
+            "  float warmB=1.0+0.45*(1.0-warmSide);\n" +
+            "  vec3 ambCol=mix(vec3(0.09,0.07,0.24),tcol*0.30,mix(0.75,0.40,warmSide));\n" +
             "  float t=1.35+fract(sin(dot(gl_FragCoord.xy,vec2(41.3,289.1))+uTime)*43758.5)*0.08;\n" + // start beyond camera-origin gas; prevents full-frame color wash when flying through a cloud
             "  float T=1.0; vec3 col=vec3(0.0);\n" +
             // A single macro front per pixel, not a per-sample volume contour:
@@ -380,7 +396,9 @@ public class NebulaDream extends DreamService {
             // Dither breaks far-field 8-bit texture banding; near gas is sampled
             // densely enough that banding is invisible, so kill the dither there
             // (it accumulated into visible static when the nebula filled the screen).
-            "    float dith=mix(0.010,0.0,nearAmt);\n" +
+            // Also fade it out with density: banding only shows in thin gas, and
+            // in dense mid/far masses the accumulated dither read as dark stipple.
+            "    float dith=mix(0.010,0.0,nearAmt)*(1.0-smoothstep(0.12,0.35,d));\n" +
             "    d=max(d+(fract(sin(dot(p.xy+vec2(p.z),vec2(12.9898,78.233)))*43758.55)-0.5)*dith,0.0);\n" +
             "    d*=cameraFade;\n" +
             "    float dustMacro=smoothstep(0.53,0.80,texture(uNoise,p*0.038+vec3(6.3,1.7,0.0)).r);\n" +
@@ -390,7 +408,7 @@ public class NebulaDream extends DreamService {
             "    float dustOcc=dustD*dustD;\n" +
             "    if(d>0.01){\n" +
             "      float dt=0.11*g;\n" +
-            "      vec3 emit=tcol*d*0.34+ambCol*d*0.18;\n" +        // dimmer interiors; rims carry more of the shape
+            "      vec3 emit=(tcol*d*0.34+ambCol*d*0.18)*warmB;\n" +  // dimmer interiors; rims carry more of the shape
             "      emit*=1.0-0.50*dustOcc;\n" +
             // Relief + rims fade into the NEAR layers; mid/rear stays pure soft
             // glow, avoiding a hard distance where dark blobs become bright rims.
@@ -414,11 +432,14 @@ public class NebulaDream extends DreamService {
             // distance falloff (deep cores still recede); dust still occludes.
             "      float coreAmt=smoothstep(CORE_LO,CORE_HI,d);\n" +
             "      if(coreAmt>0.001){\n" +
-            "        float coreGate=smoothstep(0.58,0.80,texture(uNoise,p*0.016+vec3(3.7,7.3,1.9)).r);\n" +
+            "        float coreGate=smoothstep(0.50,0.76,texture(uNoise,p*0.016+vec3(3.7,7.3,1.9)).r);\n" +
             // Mid-frequency knots give the heart internal structure — a few
             // brilliant clumps inside the dense mass, not an even wash.
             "        float knot=smoothstep(0.52,0.82,texture(uNoise,p*0.30+vec3(1.3,4.1,6.2)).r);\n" +
-            "        emit+=mix(tcol,vec3(1.0,0.86,0.96),0.65)*coreAmt*coreAmt*coreAmt*coreGate*mix(0.25,1.0,knot)*CORE_GAIN*(1.0-0.50*dustOcc);\n" +
+            // Gate floor 0.12: every dense heart carries some inner light; the
+            // gated regions blaze at full CORE_GAIN. Cores were a triple product
+            // of sparse gates and effectively never appeared in normal viewing.
+            "        emit+=mix(tcol,vec3(1.0,0.86,0.96),0.65)*coreAmt*coreAmt*coreAmt*mix(0.12,1.0,coreGate)*mix(0.25,1.0,knot)*CORE_GAIN*(1.0-0.50*dustOcc);\n" +
             "      }\n" +
             // Distance falloff: deep gas contributes progressively less, so the
             // mid/rear stack reads as faint depth, not an accumulated bright wall.
@@ -485,11 +506,31 @@ public class NebulaDream extends DreamService {
             "  col+=T*farCol*farShape*0.30;\n" +
             // Milky-way band: a broad, grainy luminance floor anchored to the
             // view direction, drifting slowly. Empty sky reads as faint depth
-            // instead of flat black; kept well below the gas and haze.
+            // instead of flat black; kept well below the gas and haze. Tinted
+            // near-neutral-warm (unresolved starlight, not blue haze).
+            // Structure (matched against ESO all-sky reference): a meandering
+            // dark rift along the centerline (the real band is defined as much
+            // by dust as by light) and slow amplitude variation along its
+            // length (star clouds + taper) — a smooth constant-width gaussian
+            // was the mathematical tell. The SAME terms are recomputed from
+            // the shared vn() in the comp pass so the sprinkle grain dips in
+            // the rift and swells in the star clouds in register with the glow.
             "  float bandPos=rd.y*1.9+0.30*rd.x+0.22*sin(uTime*0.0093);\n" +
             "  float band=exp(-bandPos*bandPos*3.0);\n" +
+            "  float bAlong=rd.x*1.66-rd.y*0.26+uSeed.x*5.0;\n" +
+            "  float rn=vn(vec2(bAlong*2.2,3.7+uTime*0.0035));\n" +
+            "  float rn2=vn(vec2(bAlong*5.0,8.1));\n" +
+            "  float lenN=vn(vec2(bAlong*1.1,1.3));\n" +
+            "  float riftPos=bandPos*3.2+(rn-0.5)*1.6;\n" +
+            "  float rift=1.0-0.60*exp(-riftPos*riftPos*5.0)*(0.35+0.65*rn2);\n" +
+            "  float bandAmp=0.55+1.05*lenN*lenN;\n" +
             "  float bandGrain=texture(uNoise,vec3(rd.xy*1.2+uSeed,0.37)+vec3(uTime*0.0021)).r;\n" +
-            "  col+=T*vec3(0.16,0.15,0.26)*band*(0.35+0.65*bandGrain)*0.12;\n" +
+            // 0.30 gain (panel-judged): the band floor sits far below the HDR
+            // knee, so the linear FP16 path renders it much dimmer than SDR —
+            // 0.20 was near-invisible on the panel, 0.38 a touch strong. With
+            // rift + star-cloud structure this reads as detail, not the
+            // featureless wash the unstructured 0.30 was.
+            "  col+=T*vec3(0.20,0.18,0.21)*band*(0.35+0.65*bandGrain)*bandAmp*rift*0.30;\n" +
             "  col+=T*hz;\n" +
             "  fragColor=vec4(col,T);\n" +
             "}\n";
@@ -514,6 +555,8 @@ public class NebulaDream extends DreamService {
             "uniform float uHdrStarGain;\n" +
             "uniform float uHdrStarMax;\n" +
             "uniform vec4 uStarFlare;\n" +
+            "uniform vec4 uNova;\n" +   // xy = cell, z = envelope*magnitude, w = layer id
+            "uniform float uNovaP;\n" + // nova progress 0..1 (drives white -> amber shift)
             "uniform vec2 uSeed;\n" +
             "uniform sampler2D uGas;\n" +
             "in vec2 vUv;\n" +
@@ -618,14 +661,53 @@ public class NebulaDream extends DreamService {
             "  vec2 df=f-(vec2(0.35)+0.30*h2(cell+11.3));\n" + // keep the smudge clear of cell edges
             "  float gang=6.2831*h1(cell+3.1);\n" +
             "  vec2 grot=vec2(cos(gang)*df.x+sin(gang)*df.y,-sin(gang)*df.x+cos(gang)*df.y);\n" +
-            "  grot.y*=mix(1.6,3.4,h1(cell+5.9));\n" +          // varied inclination
+            // Same structural recipe as the showpiece tier, scaled down: less
+            // edge-on bias, tight nucleus, deep inter-arm gaps, brighter
+            // slower-falloff disk, and a mild dust lane on inclined ones.
+            "  grot.y*=mix(1.3,2.8,h1(cell+5.9));\n" +          // varied inclination
             "  grot*=mix(9.0,16.0,h1(cell+13.7));\n" +          // varied size
             "  float gr=length(grot);\n" +
-            "  float gcore=exp(-gr*gr*3.2);\n" +
-            "  float garm=0.72+0.28*cos(2.0*atan(grot.y,grot.x)+gr*2.4);\n" +
-            "  float gdisk=exp(-gr*1.7)*0.32*garm;\n" +
+            "  float gcore=exp(-gr*gr*4.5);\n" +
+            // Arm modulation fades with radius: structure lives in the inner
+            // disk, the outer disk relaxes to a smooth faint halo — crisp
+            // long S-arms read as corny at this scale.
+            "  float ga=0.5+0.5*cos(2.0*atan(grot.y,grot.x)+gr*3.0);\n" +
+            "  float armVis=1.0-smoothstep(0.9,2.0,gr);\n" +
+            "  float garm=mix(1.0,0.30+0.70*ga*ga,armVis*0.85);\n" +
+            "  float gdisk=exp(-gr*1.45)*0.55*garm;\n" +
+            "  float lane=1.0-0.55*exp(-grot.y*grot.y*16.0)*smoothstep(0.35,0.80,gr)*(1.0-smoothstep(1.8,2.6,gr));\n" +
             "  vec3 gcol=mix(vec3(0.72,0.80,1.00),vec3(1.00,0.90,0.78),gcore);\n" +
-            "  return gcol*(gcore*0.85+gdisk)*mix(0.35,0.75,h1(cell+17.9));\n" +
+            // 1.5x overall vs the oval era: the deep inter-arm gaps and tight
+            // nucleus halved the integrated light and sank them below visibility.
+            "  return gcol*(gcore+gdisk*lane)*mix(0.55,1.05,h1(cell+17.9));\n" +
+            "}\n" +
+            // Showpiece tier: a far coarser grid (cells ~3x the galaxy grid's, so
+            // a big smudge fits without clipping) where a very rare cell holds a
+            // 3-4x galaxy with readable two-arm structure and a dust lane along
+            // the midplane. Roughly one drifts through view every ~10 minutes —
+            // the small population is texture, this is an event.
+            "vec3 galaxyBigLayer(vec2 uv,float den,float ox,float oy){\n" +
+            "  vec2 gp=uv*den+vec2(ox,oy);\n" +
+            "  vec2 cell=floor(gp),f=fract(gp);\n" +
+            "  float h=h1(cell+vec2(19.7,3.9));\n" +
+            "  if(h<0.9965) return vec3(0.0);\n" +
+            "  vec2 df=f-(vec2(0.40)+0.20*h2(cell+11.3));\n" + // keep the big smudge well clear of cell edges
+            "  float gang=6.2831*h1(cell+3.1);\n" +
+            "  vec2 grot=vec2(cos(gang)*df.x+sin(gang)*df.y,-sin(gang)*df.x+cos(gang)*df.y);\n" +
+            // Bias toward face-on (high inclination squashed the arms into a
+            // featureless oval); small nucleus, deep inter-arm gaps, dark lane.
+            "  grot.y*=mix(1.2,2.2,h1(cell+5.9));\n" +
+            "  grot*=mix(10.0,13.0,h1(cell+13.7));\n" +
+            "  float gr=length(grot);\n" +
+            "  float gcore=exp(-gr*gr*5.0);\n" +
+            // Same radial arm fade as the small tier (see galaxyLayer).
+            "  float ga=0.5+0.5*cos(2.0*atan(grot.y,grot.x)+gr*3.2);\n" +
+            "  float armVis=1.0-smoothstep(0.9,2.0,gr);\n" +
+            "  float garm=mix(1.0,0.25+0.75*ga*ga,armVis*0.9);\n" +
+            "  float gdisk=exp(-gr*1.35)*0.85*garm;\n" +
+            "  float lane=1.0-0.72*exp(-grot.y*grot.y*14.0)*smoothstep(0.35,0.80,gr)*(1.0-smoothstep(1.8,2.6,gr));\n" +
+            "  vec3 gcol=mix(vec3(0.70,0.78,1.00),vec3(1.00,0.88,0.74),gcore);\n" +
+            "  return gcol*(gcore*0.95+gdisk*lane)*mix(0.50,0.85,h1(cell+17.9));\n" +
             "}\n" +
             "vec3 sprinkleLayer(vec2 uv,float den,float ox,float oy,float dens){\n" +
             "  float thresh=0.97-dens*0.97;\n" +
@@ -662,8 +744,22 @@ public class NebulaDream extends DreamService {
             "  vec2 s2=sr2/exp(t2*SZ_MAX)+0.5+uSeed;\n" +
             "  bg+=starLayer(s1,STAR_DEN*uStarScale,L0_OX,L0_OY,0.951,0.309,0.0)*f1;\n" +
             "  bg+=starLayer(s2,STAR_DEN*uStarScale,L1_OX,L1_OY,0.423,0.906,1.0)*f2;\n" +
-            "  bg+=galaxyLayer(s1,STAR_DEN*uStarScale*0.25,L0_OX,L0_OY)*f1;\n" +
-            "  bg+=galaxyLayer(s2,STAR_DEN*uStarScale*0.25,L1_OX,L1_OY)*f2;\n" +
+            // Galaxies get their own zoom phase at quarter speed: they are
+            // effectively at infinity, so they should show almost no parallax
+            // while stars stream past. Truly static would freeze the
+            // composition forever; 0.25x reads as "vastly farther" while the
+            // population still evolves over ~5-minute layer cycles.
+            "  float gph=uTime*SZSP*0.25;\n" +
+            "  float g1=fract(gph+L0_PHASE);\n" +
+            "  float g2=fract(gph+L1_PHASE);\n" +
+            "  float gf1=smoothstep(0.10,0.30,g1)*(1.0-smoothstep(0.70,0.90,g1));\n" +
+            "  float gf2=smoothstep(0.10,0.30,g2)*(1.0-smoothstep(0.70,0.90,g2));\n" +
+            "  vec2 gs1=sr1/exp(g1*SZ_MAX)+0.5+uSeed;\n" +
+            "  vec2 gs2=sr2/exp(g2*SZ_MAX)+0.5+uSeed;\n" +
+            "  bg+=galaxyLayer(gs1,STAR_DEN*uStarScale*0.25,L0_OX,L0_OY)*gf1;\n" +
+            "  bg+=galaxyLayer(gs2,STAR_DEN*uStarScale*0.25,L1_OX,L1_OY)*gf2;\n" +
+            "  bg+=galaxyBigLayer(gs1,STAR_DEN*uStarScale*0.075,L0_OX,L0_OY)*gf1;\n" +
+            "  bg+=galaxyBigLayer(gs2,STAR_DEN*uStarScale*0.075,L1_OX,L1_OY)*gf2;\n" +
             "  vec2 sdUv=(f1>=f2)?s1:s2;\n" +
             "  float sdOx=(f1>=f2)?L0_OX:L1_OX; float sdOy=(f1>=f2)?L0_OY:L1_OY;\n" +
             "  vec2 sdGp=sdUv*STAR_DEN*uStarScale+vec2(sdOx,sdOy);\n" +
@@ -673,21 +769,65 @@ public class NebulaDream extends DreamService {
             "  float spDn=vn(scUv*3.2+uSeed*2.0+vec2(5.7,3.1))*0.55+vn(scUv*8.5+uSeed*4.0+17.3)*0.45;\n" +
             // Milky-way band (same shape/drift as the gas pass's haze band): the
             // real band IS faint stars, so sprinkle density rises inside it and
-            // the glow resolves into grain exactly where it's brightest.
+            // the glow resolves into grain exactly where it's brightest. The
+            // rift/star-cloud terms are recomputed IDENTICALLY to the gas pass
+            // (same vn(), same coords) so grain and glow structure line up:
+            // star density dips in the dust rift and swells in the clouds.
+            // Boost 7.0 (panel-judged upward twice from 2.5) — grain is the
+            // band's identity: near-saturated dot coverage in the star clouds.
             "  vec2 buv=vUv*2.0-1.0; buv.x*=uRes.x/uRes.y;\n" +
             "  vec3 brd=normalize(vec3(buv,1.5));\n" +
             "  float bandPos=brd.y*1.9+0.30*brd.x+0.22*sin(uTime*0.0093);\n" +
             "  float band=exp(-bandPos*bandPos*3.0);\n" +
-            "  float spDens=(SP_BASE+(1.0-SP_BASE)*smoothstep(SP_SS_LO,SP_SS_HI,spDn))*(1.0+sdD)*(1.0+band*1.2);\n" +
+            "  float bAlong=brd.x*1.66-brd.y*0.26+uSeed.x*5.0;\n" +
+            "  float brn=vn(vec2(bAlong*2.2,3.7+uTime*0.0035));\n" +
+            "  float brn2=vn(vec2(bAlong*5.0,8.1));\n" +
+            "  float blenN=vn(vec2(bAlong*1.1,1.3));\n" +
+            "  float briftPos=bandPos*3.2+(brn-0.5)*1.6;\n" +
+            "  float brift=1.0-0.60*exp(-briftPos*briftPos*5.0)*(0.35+0.65*brn2);\n" +
+            "  float bbandAmp=0.55+1.05*blenN*blenN;\n" +
+            "  float spDens=(SP_BASE+(1.0-SP_BASE)*smoothstep(SP_SS_LO,SP_SS_HI,spDn))*(1.0+sdD)*(1.0+band*7.0*bbandAmp*brift);\n" +
             // Three offset sprinkle fields cross-fade 120° apart over a slow
             // cycle. The dots never translate (so no sub-pixel aliasing/shimmer),
             // yet each field — and thus each lit pixel — fades fully dark for a
             // third of the cycle, so nothing stays lit in place. The 120° spacing
             // keeps the summed brightness near-constant (no global pulsing dip).
             "  float spPh=uTime*0.26;\n" +
-            "  bg+=sprinkleLayer(scUv,SP_DEN,0.19,0.43,spDens)*max(0.0,sin(spPh));\n" +
-            "  bg+=sprinkleLayer(scUv,SP_DEN,0.67,0.21,spDens)*max(0.0,sin(spPh+2.0944));\n" +
-            "  bg+=sprinkleLayer(scUv,SP_DEN,0.41,0.83,spDens)*max(0.0,sin(spPh+4.1888));\n" +
+            // In-band dots are brighter as well as denser (×1.8 at band core):
+            // count alone stayed below the visibility floor on the HDR panel.
+            "  vec3 spr=sprinkleLayer(scUv,SP_DEN,0.19,0.43,spDens)*max(0.0,sin(spPh));\n" +
+            "  spr+=sprinkleLayer(scUv,SP_DEN,0.67,0.21,spDens)*max(0.0,sin(spPh+2.0944));\n" +
+            "  spr+=sprinkleLayer(scUv,SP_DEN,0.41,0.83,spDens)*max(0.0,sin(spPh+4.1888));\n" +
+            "  bg+=spr*(1.0+band*0.8);\n" +
+            // NOVA: a once-per-session-scale event — one star swells to a
+            // brilliant point over ~2s, holds, and fades over ~25s sliding
+            // white -> amber. Rendered here as a screen-space overlay (NOT in
+            // starLayer, whose per-cell evaluation clips anything larger than
+            // one grid cell): reconstruct the star's grid position from its
+            // cell + intra-cell hash, and lay unclipped kernels in grid units
+            // so the blaze zooms with its layer. Riding bg keeps it behind gas
+            // and on the HDR star-boost chain.
+            "  if(uNova.z>0.0001){\n" +
+            "    float fn=(uNova.w<0.5)?f1:f2;\n" +
+            "    vec2 sN=(uNova.w<0.5)?s1:s2;\n" +
+            "    float caN=(uNova.w<0.5)?0.951:0.423; float saN=(uNova.w<0.5)?0.309:0.906;\n" +
+            "    vec2 offN=(uNova.w<0.5)?vec2(L0_OX,L0_OY):vec2(L1_OX,L1_OY);\n" +
+            "    vec2 cellN=vec2(uNova.x,uNova.y);\n" +
+            "    vec2 dgp=sN*(STAR_DEN*uStarScale)+offN-(cellN+h2(cellN+3.7));\n" +
+            "    float r2=dot(dgp,dgp);\n" +
+            "    float nv=uNova.z*fn;\n" +
+            "    float nv2=nv*nv;\n" +
+            // Restrained: the brightest star in the sky, not a searchlight —
+            // tight glow, short thin spikes, gains low enough that only the
+            // core saturates.
+            "    float nCore=exp(-r2*22.0)*nv2*8.0;\n" +
+            "    float nGlow=exp(-r2*2.6)*nv2*0.7+exp(-r2*0.55)*nv2*0.10;\n" +
+            "    vec2 nd=vec2(caN*dgp.x+saN*dgp.y,-saN*dgp.x+caN*dgp.y);\n" +
+            "    float nSp=(exp(-nd.y*nd.y*250.0)*exp(-nd.x*nd.x*0.16)\n" +
+            "              +exp(-nd.x*nd.x*250.0)*exp(-nd.y*nd.y*0.16))*nv2*0.45;\n" +
+            "    vec3 nCol=mix(vec3(1.00,0.97,0.92),vec3(1.00,0.70,0.42),uNovaP*uNovaP);\n" +
+            "    bg+=nCol*(nCore+nGlow+nSp);\n" +
+            "  }\n" +
             "  vec3 starSig=T*bg;\n" +
             // (deep-space floor moved to the gas pass with the haze)
             "  col+=starSig;\n" +
@@ -751,6 +891,10 @@ public class NebulaDream extends DreamService {
         private float sfStart = -1f, sfDur, sfMag, sfEnv, sfNext = 3f;
         private int sfLayer;
         private float sfCellX, sfCellY;
+        private int cUNova, cUNovaP;
+        private float nvStart = -1f, nvDur, nvMag, nvEnv, nvP, nvNext = -1f;
+        private int nvLayer;
+        private float nvCellX, nvCellY;
 
         private static float cpuFract(float x) { return x - (float)Math.floor(x); }
         private static float cpuH1(float ix, float iy) {
@@ -850,6 +994,8 @@ public class NebulaDream extends DreamService {
             cUHdrStarMax = GLES20.glGetUniformLocation(progComp,"uHdrStarMax");
             cUSeed   = GLES20.glGetUniformLocation(progComp,"uSeed");
             cUStarFlare = GLES20.glGetUniformLocation(progComp,"uStarFlare");
+            cUNova   = GLES20.glGetUniformLocation(progComp,"uNova");
+            cUNovaP  = GLES20.glGetUniformLocation(progComp,"uNovaP");
             cUGas    = GLES20.glGetUniformLocation(progComp,"uGas");
             cUStarScale = GLES20.glGetUniformLocation(progComp,"uStarScale");
 
@@ -974,6 +1120,9 @@ public class NebulaDream extends DreamService {
             GLES20.glUniform1f(cUHdrStarMax,tuning.starMax);
             updateFlare(t);
             GLES20.glUniform4f(cUStarFlare, sfCellX, sfCellY, sfEnv * sfMag, (float)sfLayer);
+            updateNova(t);
+            GLES20.glUniform4f(cUNova, nvCellX, nvCellY, nvEnv * nvMag, (float)nvLayer);
+            GLES20.glUniform1f(cUNovaP, nvP);
             GLES20.glActiveTexture(GLES20.GL_TEXTURE0);
             GLES20.glBindTexture(GLES20.GL_TEXTURE_2D,gasTex);
             GLES20.glUniform1i(cUGas,0);
@@ -1026,6 +1175,55 @@ public class NebulaDream extends DreamService {
                 float p = (t - sfStart) / sfDur;
                 float s = (float)Math.sin(Math.PI * p);
                 sfEnv = s * s;
+            }
+        }
+
+        private void updateNova(float t) {
+            if (nvNext < 0f) nvNext = NOVA_FIRST_MIN + sfRng.nextFloat() * NOVA_FIRST_RNG;
+            if (t >= nvNext) {
+                nvMag = 1.25f + 0.35f * sfRng.nextFloat();
+                nvDur = NOVA_DUR_MIN + sfRng.nextFloat() * NOVA_DUR_RNG;
+                nvStart = t;
+                // Unlike flares, a nova outlives a large part of a star-layer
+                // cycle: pick the layer with the most remaining visibility, not
+                // the currently most-visible one, so it doesn't cross-fade away
+                // mid-event.
+                float sph = t * SZ_SPEED * zoomMul;
+                float bestRem = -1f;
+                for (int i = 0; i < LAYER_OFF.length; i++) {
+                    float ti = cpuFract(sph + LAYER_PHASE[i]);
+                    float rem = 0.90f - ti;
+                    if (ti < 0.62f && rem > bestRem) { bestRem = rem; nvLayer = i; }
+                }
+                float lox = LAYER_OFF[nvLayer][0], loy = LAYER_OFF[nvLayer][1];
+                float lti = cpuFract(sph + LAYER_PHASE[nvLayer]);
+                float zoom = (float)Math.exp(lti * SZ_MAX);
+                float den = STAR_DEN * starScale;
+                float cxCenter = (0.5f + seedX) * den + lox;
+                float cyCenter = (0.5f + seedY) * den + loy;
+                float halfSpanX = (den / 2f) / zoom;
+                float aspect = screenH > 0 ? (float)screenH / screenW : 0.5625f;
+                float halfSpanY = halfSpanX * aspect;
+                for (int attempt = 0; attempt < 200; attempt++) {
+                    nvCellX = (float)Math.floor(cxCenter - halfSpanX + sfRng.nextFloat() * 2f * halfSpanX);
+                    nvCellY = (float)Math.floor(cyCenter - halfSpanY + sfRng.nextFloat() * 2f * halfSpanY);
+                    if (cpuHasStar(nvCellX, nvCellY, lox, loy)) break;
+                }
+                nvNext = t + nvDur + NOVA_GAP_MIN + sfRng.nextFloat() * NOVA_GAP_RNG;
+                Log.i(TAG,"NOVA cell="+nvCellX+","+nvCellY+" layer="+nvLayer+" mag="+String.format("%.3f",nvMag)+" dur="+String.format("%.1f",nvDur));
+            }
+            nvEnv = 0f; nvP = 0f;
+            if (nvStart >= 0f && t < nvStart + nvDur) {
+                float p = (t - nvStart) / nvDur;
+                nvP = p;
+                // ~2s rise to full, short hold, long exponential fade; a final
+                // window ramp lands the tail at exactly zero.
+                float rise = Math.min(1f, p / 0.08f);
+                rise = rise * rise * (3f - 2f * rise);
+                float fall = (p > 0.18f) ? (float)Math.exp(-(p - 0.18f) * 4.2f) : 1f;
+                float end = Math.max(0f, Math.min(1f, (p - 0.85f) / 0.15f));
+                end = 1f - end * end * (3f - 2f * end);
+                nvEnv = rise * fall * end;
             }
         }
 
