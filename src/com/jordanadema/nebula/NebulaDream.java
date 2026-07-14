@@ -34,6 +34,26 @@ public class NebulaDream extends DreamService {
         Prefs prefs = Prefs.from(this);
         DisplayDiagnostics display = DisplayDiagnostics.configure(this);
         displayDiag = display;
+        // Perf-ablation harness (dev only). Comma-separated component list read
+        // from a shell-settable global setting, e.g.
+        //   adb shell settings put global nebula_ablate STARS,BANDGRAIN
+        // Each name compiles that component out of the shader; a non-empty value
+        // also pins the gas FBO scale so variants are directly comparable.
+        String ablate = android.provider.Settings.Global.getString(
+            getContentResolver(), "nebula_ablate");
+        // Gas-FBO scale to pin the sweep at. The adaptive scaler makes gas scale
+        // a dependent variable — drop a component and it just spends the savings
+        // on a bigger FBO — so the sweep pins it at the scale the device actually
+        // settles to in normal use, and component costs come out in shipping terms.
+        float gasPin = 0f;
+        try {
+            String p = android.provider.Settings.Global.getString(
+                getContentResolver(), "nebula_gaspin");
+            if (p != null && !p.trim().isEmpty()) gasPin = Float.parseFloat(p.trim());
+        } catch (NumberFormatException e) {
+            Log.w(TAG, "bad nebula_gaspin", e);
+        }
+        Log.i(TAG, "ablate=" + (ablate == null ? "(none)" : ablate) + " gasPin=" + gasPin);
         boolean wantHdr = !Prefs.HDR_OFF.equals(prefs.hdrMode());
 
         // Drive the panel for maximum highlight luminance: full screen
@@ -75,7 +95,7 @@ public class NebulaDream extends DreamService {
         // while adaptive render scale governs only the low-res gas FBO.
         renderer = new NebulaRenderer(
             prefs.zoomMul(), prefs.frameCapFps(), hdr,
-            prefs.renderScale(), hdrTuning, display);
+            prefs.renderScale(), hdrTuning, display, ablate, gasPin);
         glView.setRenderer(renderer);
         glView.setRenderMode(GLSurfaceView.RENDERMODE_CONTINUOUSLY);
         setContentView(glView);
@@ -133,8 +153,11 @@ public class NebulaDream extends DreamService {
         private static final float SD_W_HI     = 0.45f;
         private static final float SD_SS_LO    = 0.38f;
         private static final float SD_SS_HI    = 0.58f;
-        private static final float STAR_FLOOR  = 0.38f;
-        private static final float STAR_CEIL   = 0.92f;
+        // 1.6x the historical population (0.38/0.92): 2x was tried and cost
+        // ~1ms too much on the Shield — star count is only free until the
+        // extra lit cells start shading real pixels.
+        private static final float STAR_FLOOR  = 0.24f;
+        private static final float STAR_CEIL   = 0.78f;
         private static final float STAR_RANGE  = 0.54f;
 
         // Star grid and zoom
@@ -159,9 +182,24 @@ public class NebulaDream extends DreamService {
         private static final float SP_DEN      = 800.0f;
         private static final float SP_CORE     = 1200.0f;
         private static final float SP_BRI      = 0.30f;
-        private static final float SP_BASE     = 0.13f; // raised floor: endless faint stars beneath the bright ones
+        private static final float SP_BASE     = 0.18f; // raised floor: endless faint stars beneath the bright ones
         private static final float SP_SS_LO    = 0.25f;
         private static final float SP_SS_HI    = 0.65f;
+        // Faint-star carpet (band only): coarser grid than the sprinkles but
+        // RESOLVED dots — ~0.6px cores at 1080p (CP_K sets radius ~0.15 cell).
+        // v4.9.0 measurement: boosting sub-pixel sprinkle counts 7x moved the
+        // visible dot ratio only to ~1.4x; footprint, not count, buys stars.
+        private static final float CP_DEN      = 720.0f;
+        private static final float CP_K        = 34.0f;
+        private static final float CP_BRI      = 0.12f;
+        // Braided-rift detail (second dust lane + fine mottle); was disabled
+        // during the 2026-07-14 brightness triage, re-enabled once the grain
+        // range compression fixed the all-or-nothing behaviour.
+        private static final boolean BAND_BRAID = true;
+        // Band LUT: texel count and the bAlong half-range it covers around
+        // the seed centre (on-screen range is ~±1.2; fetches clamp at edges).
+        private static final int   BAND_LUT_N    = 256;
+        private static final float BAND_LUT_HALF = 1.5f;
 
         // Galaxy haze
         private static final float HAZE_MUL    = 0.22f;
@@ -171,6 +209,19 @@ public class NebulaDream extends DreamService {
         private static final float CORE_LO   = 0.40f;
         private static final float CORE_HI   = 0.72f;
         private static final float CORE_GAIN = 4.0f;
+
+        // Nebula gas HDR: the gas rides a LOWER ceiling and a gentler ramp than
+        // the stars. The star curve saturates by design — a point highlight
+        // should slam to peak the moment it clears the knee — but the gas was
+        // sharing it, so any mass past the knee jumped to near-peak at once.
+        // Density variation inside a bright mass then mapped to almost the same
+        // output (texture gone) at full palette saturation, across whatever area
+        // the mass covered. Gas now climbs progressively and tops out partway up
+        // the panel's range, leaving the top to stars, novas and the cores: a few
+        // highlights blaze, large areas do not.
+        private static final float GAS_HDR_CEIL = 0.37f; // share of panel headroom the gas may reach
+        private static final float GAS_HDR_KNEE = 1.25f; // gas starts boosting later than stars
+        private static final float GAS_HDR_GAIN = 0.27f; // and climbs far more slowly once it does
 
         // Star rendering
         private static final float SPIKE_THRESH = 0.65f;
@@ -245,6 +296,12 @@ public class NebulaDream extends DreamService {
             "#define SP_BASE "     + SP_BASE     + "\n" +
             "#define SP_SS_LO "    + SP_SS_LO    + "\n" +
             "#define SP_SS_HI "    + SP_SS_HI    + "\n" +
+            "#define CP_DEN "      + CP_DEN      + "\n" +
+            "#define CP_K "        + CP_K        + "\n" +
+            "#define CP_BRI "      + CP_BRI      + "\n" +
+            "#define GAS_HDR_CEIL " + GAS_HDR_CEIL + "\n" +
+            "#define GAS_HDR_KNEE " + GAS_HDR_KNEE + "\n" +
+            "#define GAS_HDR_GAIN " + GAS_HDR_GAIN + "\n" +
             "#define SPIKE_THRESH " + SPIKE_THRESH + "\n";
 
         private static final String VERT_ES3 =
@@ -275,6 +332,10 @@ public class NebulaDream extends DreamService {
             "uniform float uStarScale;\n" + // grid-density scale (1.0 = reference width)
             "uniform vec2 uSeed;\n" +
             "uniform sampler3D uNoise;\n" + // R = value fbm, G = inverted Worley (billow)
+            // 256x1 RGBA: per-frame CPU bake of the 1D along-band terms
+            // (R=rift meander, G=rift depth noise, B=star-cloud amp noise,
+            // A=bulge). One fetch replaces four vn() evaluations per pixel.
+            "uniform sampler2D uBandLut;\n" +
             "in vec2 vUv;\n" +
             "out vec4 fragColor;\n" +
             // ── Galaxy haze (v3.1 pointillistic): SOFT, so it lives in this low-res
@@ -365,6 +426,7 @@ public class NebulaDream extends DreamService {
             "  vec3 ambCol=mix(vec3(0.09,0.07,0.24),tcol*0.30,mix(0.75,0.40,warmSide));\n" +
             "  float t=1.35+fract(sin(dot(gl_FragCoord.xy,vec2(41.3,289.1))+uTime)*43758.5)*0.08;\n" + // start beyond camera-origin gas; prevents full-frame color wash when flying through a cloud
             "  float T=1.0; vec3 col=vec3(0.0);\n" +
+            "#ifndef ABL_NO_MARCH\n" +
             // A single macro front per pixel, not a per-sample volume contour:
             // this gives the dust layer one readable silhouette and one matching rim.
             "  vec2 frontDrift=vec2(sin(uTime*0.031),cos(uTime*0.027))*0.55;\n" +
@@ -401,18 +463,24 @@ public class NebulaDream extends DreamService {
             "    float dith=mix(0.010,0.0,nearAmt)*(1.0-smoothstep(0.12,0.35,d));\n" +
             "    d=max(d+(fract(sin(dot(p.xy+vec2(p.z),vec2(12.9898,78.233)))*43758.55)-0.5)*dith,0.0);\n" +
             "    d*=cameraFade;\n" +
+            "#ifdef ABL_NO_DUST\n" +
+            "    float dustD=0.0;\n" +
+            "    float dustOcc=0.0;\n" +
+            "#else\n" +
             "    float dustMacro=smoothstep(0.53,0.80,texture(uNoise,p*0.038+vec3(6.3,1.7,0.0)).r);\n" +
-            "    float frontDetail=smoothstep(0.34,0.82,texture(uNoise,p*0.085+vec3(9.1,3.8,uTime*0.003)).r);\n" +
             "    float nearDust=(1.0-smoothstep(4.0,12.0,t))*cameraFade;\n" +
             "    float dustD=dustMacro*nearDust*(0.38+0.50*frontBreak);\n" +
             "    float dustOcc=dustD*dustD;\n" +
+            "#endif\n" +
             "    if(d>0.01){\n" +
             "      float dt=0.11*g;\n" +
             "      vec3 emit=(tcol*d*0.34+ambCol*d*0.18)*warmB;\n" +  // dimmer interiors; rims carry more of the shape
             "      emit*=1.0-0.50*dustOcc;\n" +
             // Relief + rims fade into the NEAR layers; mid/rear stays pure soft
             // glow, avoiding a hard distance where dark blobs become bright rims.
+            "#ifndef ABL_NO_RELIEF\n" +
             "      if(nearAmt>0.001){\n" +
+            "        float frontDetail=smoothstep(0.34,0.82,texture(uNoise,p*0.085+vec3(9.1,3.8,uTime*0.003)).r);\n" +
             "        float ds=densFar(p);\n" +
             "        float dlit=densFar(p+ldir*0.34);\n" +
             "        float lit=clamp((ds-dlit)*9.0,0.0,1.0);\n" +
@@ -425,11 +493,13 @@ public class NebulaDream extends DreamService {
             "        float shell=smoothstep(0.018,0.10,d)*(1.0-smoothstep(0.22,0.48,d));\n" +
             "        emit+=mix(tcol,vec3(1.0,0.48,0.90),0.30)*frontHalo*(d*0.20+shell*0.68)*frontGrain*0.35*nearAmt;\n" +
             "      }\n" +
+            "#endif\n" +
             // STAR-FORMING CORE: the densest hearts glow white-pink. Gated by a
             // very-low-frequency seed so only some masses ignite — a localized
             // brilliance the eye is drawn to, not a global interior brightening.
             // Added after relief (cores are self-luminous, not sunlit) but before
             // distance falloff (deep cores still recede); dust still occludes.
+            "#ifndef ABL_NO_CORE\n" +
             "      float coreAmt=smoothstep(CORE_LO,CORE_HI,d);\n" +
             "      if(coreAmt>0.001){\n" +
             "        float coreGate=smoothstep(0.50,0.76,texture(uNoise,p*0.016+vec3(3.7,7.3,1.9)).r);\n" +
@@ -441,6 +511,7 @@ public class NebulaDream extends DreamService {
             // of sparse gates and effectively never appeared in normal viewing.
             "        emit+=mix(tcol,vec3(1.0,0.86,0.96),0.65)*coreAmt*coreAmt*coreAmt*mix(0.12,1.0,coreGate)*mix(0.25,1.0,knot)*CORE_GAIN*(1.0-0.50*dustOcc);\n" +
             "      }\n" +
+            "#endif\n" +
             // Distance falloff: deep gas contributes progressively less, so the
             // mid/rear stack reads as faint depth, not an accumulated bright wall.
             "      emit*=1.0/(1.0+t*0.055);\n" +
@@ -457,11 +528,13 @@ public class NebulaDream extends DreamService {
             "    dPrev=d;\n" +
             "    if(t>48.0) break;\n" +                              // deep march range
             "  }\n" +
+            "#endif\n" +
             "  col*=0.95;\n" + // gain for the tonemap (slightly dimmer overall)
 
             // Galaxy haze + deep-space floor BEHIND the gas (same three-phase star
             // zoom as the comp pass, so haze and stars move as one entity).
             "  vec3 hz=vec3(0.0);\n" +
+            "#ifndef ABL_NO_HAZE\n" +
             "  float hzSP=SZ_SPEED*uZoom;\n" +
             "  float hzPh=uTime*hzSP;\n" +
             "  float t1=fract(hzPh+0.000);\n" +
@@ -478,59 +551,65 @@ public class NebulaDream extends DreamService {
             "  hz+=hazeLayer(sr2/exp(t2*SZ_MAX)+0.5+uSeed,STAR_DEN*uStarScale,L1_OX,L1_OY)*f2*0.85;\n" +
             "  hz+=hazeLayer(sr3/exp(t3*SZ_MAX)+0.5+uSeed,STAR_DEN*uStarScale,0.71,0.53)*f3*0.70;\n" +
             "  hz+=vec3(0.0);\n" +
-            "  vec3 pFar=ro+rd*55.0;\n" +
+            "#endif\n" +
+            "  float farShape=0.0;\n" +
+            "#ifndef ABL_NO_FAR\n" +
+            // Single mid-depth slab (was three at 55/72/95): the three stacked
+            // layers cost ~4ms and read as one faint haze anyway. One sample at
+            // ~65 with full weight matches the old weighted-sum brightness.
+            "  vec3 pFar=ro+rd*65.0;\n" +
             "  float farBase=texture(uNoise,pFar*0.062).r;\n" +
             "  float farCov=smoothstep(0.26,0.68,texture(uNoise,pFar*0.022+0.31).r);\n" +
             "  float farD=rm(farBase,1.0-farCov,1.0)*farCov;\n" +
             "  float farEro=texture(uNoise,pFar*0.22).g;\n" +
             "  farD=rm(farD,farEro*0.24,1.0);\n" +
-            "  farD=pow(farD,2.0);\n" +
-            "  vec3 pFar2=ro+rd*72.0;\n" +
-            "  float farBase2=texture(uNoise,pFar2*0.062).r;\n" +
-            "  float farCov2=smoothstep(0.26,0.68,texture(uNoise,pFar2*0.022+0.31).r);\n" +
-            "  float farD2=rm(farBase2,1.0-farCov2,1.0)*farCov2;\n" +
-            "  float farEro2=texture(uNoise,pFar2*0.22).g;\n" +
-            "  farD2=rm(farD2,farEro2*0.24,1.0);\n" +
-            "  farD2=pow(farD2,2.0);\n" +
-            "  vec3 pFar3=ro+rd*95.0;\n" +
-            "  float farBase3=texture(uNoise,pFar3*0.062).r;\n" +
-            "  float farCov3=smoothstep(0.26,0.68,texture(uNoise,pFar3*0.022+0.31).r);\n" +
-            "  float farD3=rm(farBase3,1.0-farCov3,1.0)*farCov3;\n" +
-            "  float farEro3=texture(uNoise,pFar3*0.22).g;\n" +
-            "  farD3=rm(farD3,farEro3*0.24,1.0);\n" +
-            "  farD3=pow(farD3,2.0);\n" +
-            "  float farShape=farD*0.45+farD2*0.35+farD3*0.20;\n" +
+            "  farShape=pow(farD,2.0);\n" +
+            "#endif\n" +
+            // Band gaussian computed before far-gas: the far blobs are dimmed
+            // inside the band core so they stop competing with it — measured
+            // v4.9.0, they sat in the same luminance/scale class and the band
+            // read as one more blotch.
+            "  float bandPos=rd.y*1.9+0.30*rd.x+0.22*sin(uTime*0.0093);\n" +
+            "  float band=exp(-bandPos*bandPos*3.0);\n" +
+            "#ifndef ABL_NO_FAR\n" +
             "  float farReg=texture(uNoise,vec3(pFar.xy*0.03,uTime*0.01)).r;\n" +
             "  float farTemp=clamp((farReg-0.5)*1.4+0.55+tempBias*0.8,0.0,1.0);\n" +
             "  vec3 farCol=(farTemp<0.5)?mix(pink,midc,farTemp/0.5):mix(midc,cool,(farTemp-0.5)/0.5);\n" +
-            "  col+=T*farCol*farShape*0.30;\n" +
-            // Milky-way band: a broad, grainy luminance floor anchored to the
-            // view direction, drifting slowly. Empty sky reads as faint depth
-            // instead of flat black; kept well below the gas and haze. Tinted
-            // near-neutral-warm (unresolved starlight, not blue haze).
-            // Structure (matched against ESO all-sky reference): a meandering
-            // dark rift along the centerline (the real band is defined as much
-            // by dust as by light) and slow amplitude variation along its
-            // length (star clouds + taper) — a smooth constant-width gaussian
-            // was the mathematical tell. The SAME terms are recomputed from
-            // the shared vn() in the comp pass so the sprinkle grain dips in
-            // the rift and swells in the star clouds in register with the glow.
-            "  float bandPos=rd.y*1.9+0.30*rd.x+0.22*sin(uTime*0.0093);\n" +
-            "  float band=exp(-bandPos*bandPos*3.0);\n" +
+            // Cool/violet shift: keeps far gas off the band's neutral-warm axis.
+            "  farCol*=vec3(0.88,0.92,1.10);\n" +
+            "  col+=T*farCol*farShape*0.30*(1.0-0.35*band);\n" +
+            "#endif\n" +
+            // Milky-way band, gas-pass share: only the broad SOFT halo lives
+            // here — this FBO is 0.10-0.5x resolution and bilinear-upsampled,
+            // so any detail finer than ~3 screen px cannot survive it. The
+            // textured majority of the band's light (grain, dust braiding,
+            // faint-star carpet) is added at native res in the comp pass; the
+            // two stay in register because both recompute the same terms from
+            // the shared vn(). Gain split: 0.12 halo here + 0.135*avg-grain
+            // in the comp pass. Panel-walked (2026-07-14): halo at 0.12 reads
+            // right, but the comp grain glow was identified as the too-bright
+            // component and halved from its capture-derived 0.27.
+            "#ifndef ABL_NO_BANDGAS\n" +
             "  float bAlong=rd.x*1.66-rd.y*0.26+uSeed.x*5.0;\n" +
-            "  float rn=vn(vec2(bAlong*2.2,3.7+uTime*0.0035));\n" +
-            "  float rn2=vn(vec2(bAlong*5.0,8.1));\n" +
-            "  float lenN=vn(vec2(bAlong*1.1,1.3));\n" +
-            "  float riftPos=bandPos*3.2+(rn-0.5)*1.6;\n" +
-            "  float rift=1.0-0.60*exp(-riftPos*riftPos*5.0)*(0.35+0.65*rn2);\n" +
-            "  float bandAmp=0.55+1.05*lenN*lenN;\n" +
+            // LUT covers bAlong in [center-1.5, center+1.5]; on-screen range
+            // is ~±1.2, and the fetch clamps at the edges.
+            "  vec4 bl=texture(uBandLut,vec2((bAlong-uSeed.x*5.0)*0.33333+0.5,0.5));\n" +
+            "  float riftPos=bandPos*3.2+(bl.r-0.5)*1.6;\n" +
+            "  float rift=1.0-0.60*exp(-riftPos*riftPos*5.0)*(0.35+0.65*bl.g);\n" +
+            // Per-seed bulge hotspot (baked in LUT alpha): the real band
+            // brightens ~5x toward the galactic centre; centre position spans
+            // +-4 along-band units so most seeds keep it off-screen and some
+            // sessions get the core.
+            "  float bulge=bl.a;\n" +
+            "  float bandAmp=0.60+0.80*bl.b*bl.b+1.0*bulge;\n" +
             "  float bandGrain=texture(uNoise,vec3(rd.xy*1.2+uSeed,0.37)+vec3(uTime*0.0021)).r;\n" +
-            // 0.30 gain (panel-judged): the band floor sits far below the HDR
-            // knee, so the linear FP16 path renders it much dimmer than SDR —
-            // 0.20 was near-invisible on the panel, 0.38 a touch strong. With
-            // rift + star-cloud structure this reads as detail, not the
-            // featureless wash the unstructured 0.30 was.
-            "  col+=T*vec3(0.20,0.18,0.21)*band*(0.35+0.65*bandGrain)*bandAmp*rift*0.30;\n" +
+            // Soft knee at 0.8: where bulge, star-cloud amp and grain peaks
+            // coincide the product spikes to ~3x typical — compress only that
+            // top end, the body of the band passes through untouched.
+            "  float bx=band*(0.35+0.65*bandGrain)*bandAmp*rift;\n" +
+            "  bx/=1.0+max(bx-0.8,0.0)*0.5;\n" +
+            "  col+=T*mix(vec3(0.20,0.185,0.205),vec3(0.245,0.205,0.165),bulge)*bx*0.12;\n" +
+            "#endif\n" +
             "  col+=T*hz;\n" +
             "  fragColor=vec4(col,T);\n" +
             "}\n";
@@ -557,6 +636,7 @@ public class NebulaDream extends DreamService {
             "uniform vec4 uStarFlare;\n" +
             "uniform vec4 uNova;\n" +   // xy = cell, z = envelope*magnitude, w = layer id
             "uniform float uNovaP;\n" + // nova progress 0..1 (drives white -> amber shift)
+            "uniform sampler2D uBandLut;\n" + // shared with the gas pass; see there
             "uniform vec2 uSeed;\n" +
             "uniform sampler2D uGas;\n" +
             "in vec2 vUv;\n" +
@@ -583,6 +663,9 @@ public class NebulaDream extends DreamService {
             "}\n" +
             "float twinkleComp(){ return 1.0; }\n" +
             "float starTwinkle(vec2 cell,float lid,float mag){\n" +
+            "#ifdef ABL_NO_TWINKLE\n" +
+            "  return 1.0;\n" +
+            "#else\n" +
             "  float seed=h1(cell+vec2(17.0+lid*13.0,31.0-lid*7.0));\n" +
             "  float rate=mix(0.60,1.40,h1(cell+5.3+lid*1.7));\n" + // lively sparkle: 0.7-1.7s per cycle
             "  float ph=6.2831853*(seed+uTime*rate);\n" +
@@ -594,6 +677,7 @@ public class NebulaDream extends DreamService {
             "  float comp=twinkleComp();\n" +
             "  float amt=mix(0.85,0.40,mag)*comp;\n" +
             "  return 1.0+amt*(wave-0.5);\n" +
+            "#endif\n" +
             "}\n" +
             "vec3 starLayer(vec2 uv,float den,float ox,float oy,float ca,float sa,float lid){\n" +
             "  vec2 gp=uv*den+vec2(ox,oy);\n" +
@@ -637,6 +721,7 @@ public class NebulaDream extends DreamService {
             "  float halo=eh*mag*0.15*(0.74+0.26*tw);\n" +
             "  if(fl2>0.0001) halo+=exp(-d2*40.0)*fl2*0.9+exp(-d2*12.0)*fl2*0.30;\n" +
             "  float spike=0.0;\n" +
+            "#ifndef ABL_NO_SPIKE\n" +
             "  if(mag>SPIKE_THRESH||fl2>0.0001){\n" +
             "    vec2 sdf=vec2(ca*df.x+sa*df.y,-sa*df.x+ca*df.y);\n" +
             "    float spTight=32.0/((1.0+fl2*1.0)*max(0.45,1.0+twDelta*1.10));\n" +
@@ -646,6 +731,7 @@ public class NebulaDream extends DreamService {
             "    float spV=exp(-sdf.x*sdf.x*kSp)*exp(-sdf.y*sdf.y*spTight)*spWn;\n" +
             "    spike=(spH+spV)*bri*bri*(0.14+0.32*tw);\n" +
             "  }\n" +
+            "#endif\n" +
             "  return starCol(h1(cell+9.1),mag)*(core+halo+spike);\n" +
             "}\n" +
             // Sparse galaxy field: a coarse grid (1/4 star density, so smudges
@@ -668,13 +754,10 @@ public class NebulaDream extends DreamService {
             "  grot*=mix(9.0,16.0,h1(cell+13.7));\n" +          // varied size
             "  float gr=length(grot);\n" +
             "  float gcore=exp(-gr*gr*4.5);\n" +
-            // Arm modulation fades with radius: structure lives in the inner
-            // disk, the outer disk relaxes to a smooth faint halo — crisp
-            // long S-arms read as corny at this scale.
-            "  float ga=0.5+0.5*cos(2.0*atan(grot.y,grot.x)+gr*3.0);\n" +
-            "  float armVis=1.0-smoothstep(0.9,2.0,gr);\n" +
-            "  float garm=mix(1.0,0.30+0.70*ga*ga,armVis*0.85);\n" +
-            "  float gdisk=exp(-gr*1.45)*0.55*garm;\n" +
+            // Smooth inclined disk (no spiral-arm term): the atan+cos arm
+            // modulation cost more than it read at this scale — a squashed,
+            // dust-laned oval is what the eye actually resolves.
+            "  float gdisk=exp(-gr*1.45)*0.55;\n" +
             "  float lane=1.0-0.55*exp(-grot.y*grot.y*16.0)*smoothstep(0.35,0.80,gr)*(1.0-smoothstep(1.8,2.6,gr));\n" +
             "  vec3 gcol=mix(vec3(0.72,0.80,1.00),vec3(1.00,0.90,0.78),gcore);\n" +
             // 1.5x overall vs the oval era: the deep inter-arm gaps and tight
@@ -700,11 +783,8 @@ public class NebulaDream extends DreamService {
             "  grot*=mix(10.0,13.0,h1(cell+13.7));\n" +
             "  float gr=length(grot);\n" +
             "  float gcore=exp(-gr*gr*5.0);\n" +
-            // Same radial arm fade as the small tier (see galaxyLayer).
-            "  float ga=0.5+0.5*cos(2.0*atan(grot.y,grot.x)+gr*3.2);\n" +
-            "  float armVis=1.0-smoothstep(0.9,2.0,gr);\n" +
-            "  float garm=mix(1.0,0.25+0.75*ga*ga,armVis*0.9);\n" +
-            "  float gdisk=exp(-gr*1.35)*0.85*garm;\n" +
+            // Smooth inclined disk (arm term dropped, see galaxyLayer).
+            "  float gdisk=exp(-gr*1.35)*0.85;\n" +
             "  float lane=1.0-0.72*exp(-grot.y*grot.y*14.0)*smoothstep(0.35,0.80,gr)*(1.0-smoothstep(1.8,2.6,gr));\n" +
             "  vec3 gcol=mix(vec3(0.70,0.78,1.00),vec3(1.00,0.88,0.74),gcore);\n" +
             "  return gcol*(gcore*0.95+gdisk*lane)*mix(0.50,0.85,h1(cell+17.9));\n" +
@@ -722,6 +802,21 @@ public class NebulaDream extends DreamService {
             "  float b=core*SP_BRI;\n" +
             "  vec3 sc=starCol(h1(cell+9.3),0.15);\n" +
             "  return sc*b;\n" +
+            "}\n" +
+            // Faint-star carpet: the band's near-saturated population of dim
+            // but RESOLVED dots (footprint ~0.6px; sub-pixel dots lose most of
+            // their light to the pixel-placement lottery). Only drawn in-band.
+            "vec3 carpetLayer(vec2 uv,float ox,float oy,float dens){\n" +
+            "  float thresh=0.97-dens*0.97;\n" +
+            "  vec2 gp=uv*CP_DEN+vec2(ox,oy);\n" +
+            "  vec2 cell=floor(gp),f=fract(gp);\n" +
+            "  float h=h1(cell+vec2(53.0,11.0));\n" +
+            "  if(h<thresh) return vec3(0.0);\n" +
+            "  vec2 df=f-h2(cell+31.7);\n" +
+            "  float d2=dot(df,df);\n" +
+            "  float core=max(0.0,1.0-d2*CP_K);\n" +
+            "  core*=core;\n" +
+            "  return starCol(h1(cell+4.9),0.05)*core*CP_BRI*(0.4+0.6*h1(cell+2.3));\n" +
             "}\n" +
             "void main(){\n" +
             "  vec4 gas=texture(uGas,vUv);\n" +
@@ -742,13 +837,61 @@ public class NebulaDream extends DreamService {
             "  vec2 sr2=vec2(sc.x*0.423-sc.y*0.906, sc.x*0.906+sc.y*0.423);\n" +
             "  vec2 s1=sr1/exp(t1*SZ_MAX)+0.5+uSeed;\n" +
             "  vec2 s2=sr2/exp(t2*SZ_MAX)+0.5+uSeed;\n" +
-            "  bg+=starLayer(s1,STAR_DEN*uStarScale,L0_OX,L0_OY,0.951,0.309,0.0)*f1;\n" +
-            "  bg+=starLayer(s2,STAR_DEN*uStarScale,L1_OX,L1_OY,0.423,0.906,1.0)*f2;\n" +
+            // Milky-way band structure, recomputed IDENTICALLY to the gas pass
+            // (same vn(), same coords) so native-res detail here lands in
+            // register with the low-res halo there. Computed before the star
+            // layers because the bright stars are brightness-biased into the
+            // band (sBias) — in the real sky every stellar population rises
+            // toward the plane, and stars that ignore the band contradict it.
+            "  vec2 buv=vUv*2.0-1.0; buv.x*=uRes.x/uRes.y;\n" +
+            "  vec3 brd=normalize(vec3(buv,1.5));\n" +
+            "  float bandPos=brd.y*1.9+0.30*brd.x+0.22*sin(uTime*0.0093);\n" +
+            "  float band=exp(-bandPos*bandPos*3.0);\n" +
+            "  float bAlong=brd.x*1.66-brd.y*0.26+uSeed.x*5.0;\n" +
+            // All vn-based band terms sit behind a band+transmittance gate:
+            // every downstream use multiplies by band and rides T, so pixels
+            // that are off-band OR behind dense gas skip the noise calls
+            // entirely, and the defaults are visually continuous at the gate
+            // edge. Without gating the native-res band work cost ~4.5ms/frame
+            // on the Shield and forced the adaptive gas scale down.
+            "  float brift=1.0; float bbandAmp=1.0; float bbulge=0.0;\n" +
+            "#ifdef ABL_NO_BANDSTRUCT\n" +
+            "  if(false){\n" +
+            "#else\n" +
+            "  if(band>0.02&&T>0.03){\n" +
+            "#endif\n" +
+            // One LUT fetch replaces the four along-band vn() calls (same
+            // bake the gas pass reads, so the passes stay in register).
+            "    vec4 bl=texture(uBandLut,vec2((bAlong-uSeed.x*5.0)*0.33333+0.5,0.5));\n" +
+            "    float briftPos=bandPos*3.2+(bl.r-0.5)*1.6;\n" +
+            // Comp-only rift detail on top of the gas pass's primary lane
+            // (kept in register via the shared meander term): a second offset
+            // meander braids with the first (reusing bl.g as its meander),
+            // and a fine dust mottle breaks both into patches. Sharper
+            // profile (k=7) and deeper floor than v4.9.0: dust should read
+            // as near-black structure. The dust term is the one survivor
+            // that genuinely needs 2D per-pixel noise.
+            (BAND_BRAID
+            ? "    float brift2Pos=bandPos*3.2+(bl.g-0.5)*2.2+0.60;\n" +
+              "    float bdust=vn(vec2(bAlong*7.0,bandPos*9.0)+7.7);\n" +
+              "    brift=1.0-0.68*exp(-briftPos*briftPos*7.0)*(0.35+0.65*bl.g)\n" +
+              "         -0.40*exp(-brift2Pos*brift2Pos*6.0)*smoothstep(0.35,0.75,bdust);\n" +
+              "    brift=max(brift,0.10);\n"
+            : "    brift=1.0-0.60*exp(-briftPos*briftPos*5.0)*(0.35+0.65*bl.g);\n") +
+            "    bbulge=bl.a;\n" +
+            "    bbandAmp=0.60+0.80*bl.b*bl.b+1.0*bbulge;\n" +
+            "  }\n" +
+            "  float sBias=1.0+0.5*band*brift;\n" +
+            "#ifndef ABL_NO_STARS\n" +
+            "  bg+=starLayer(s1,STAR_DEN*uStarScale,L0_OX,L0_OY,0.951,0.309,0.0)*f1*sBias;\n" +
+            "  bg+=starLayer(s2,STAR_DEN*uStarScale,L1_OX,L1_OY,0.423,0.906,1.0)*f2*sBias;\n" +
+            "#endif\n" +
             // Galaxies get their own zoom phase at quarter speed: they are
             // effectively at infinity, so they should show almost no parallax
             // while stars stream past. Truly static would freeze the
             // composition forever; 0.25x reads as "vastly farther" while the
             // population still evolves over ~5-minute layer cycles.
+            "#ifndef ABL_NO_GALAXY\n" +
             "  float gph=uTime*SZSP*0.25;\n" +
             "  float g1=fract(gph+L0_PHASE);\n" +
             "  float g2=fract(gph+L1_PHASE);\n" +
@@ -760,44 +903,73 @@ public class NebulaDream extends DreamService {
             "  bg+=galaxyLayer(gs2,STAR_DEN*uStarScale*0.25,L1_OX,L1_OY)*gf2;\n" +
             "  bg+=galaxyBigLayer(gs1,STAR_DEN*uStarScale*0.075,L0_OX,L0_OY)*gf1;\n" +
             "  bg+=galaxyBigLayer(gs2,STAR_DEN*uStarScale*0.075,L1_OX,L1_OY)*gf2;\n" +
+            "#endif\n" +
+            "  vec2 scUv=sc+0.5;\n" +
+            "  float sdD=0.0; float spDn=0.0;\n" +
+            "#ifndef ABL_NO_SPRINKLE\n" +
             "  vec2 sdUv=(f1>=f2)?s1:s2;\n" +
             "  float sdOx=(f1>=f2)?L0_OX:L1_OX; float sdOy=(f1>=f2)?L0_OY:L1_OY;\n" +
             "  vec2 sdGp=sdUv*STAR_DEN*uStarScale+vec2(sdOx,sdOy);\n" +
             "  float sdField=vn(sdGp*SD_FREQ_LO+vec2(sdOx*0.1,sdOy*0.1))*SD_W_LO+vn(sdGp*SD_FREQ_HI+11.0)*SD_W_HI;\n" +
-            "  float sdD=smoothstep(SD_SS_LO,SD_SS_HI,sdField); sdD*=sdD;\n" +
-            "  vec2 scUv=sc+0.5;\n" +
-            "  float spDn=vn(scUv*3.2+uSeed*2.0+vec2(5.7,3.1))*0.55+vn(scUv*8.5+uSeed*4.0+17.3)*0.45;\n" +
-            // Milky-way band (same shape/drift as the gas pass's haze band): the
-            // real band IS faint stars, so sprinkle density rises inside it and
-            // the glow resolves into grain exactly where it's brightest. The
-            // rift/star-cloud terms are recomputed IDENTICALLY to the gas pass
-            // (same vn(), same coords) so grain and glow structure line up:
-            // star density dips in the dust rift and swells in the clouds.
-            // Boost 7.0 (panel-judged upward twice from 2.5) — grain is the
-            // band's identity: near-saturated dot coverage in the star clouds.
-            "  vec2 buv=vUv*2.0-1.0; buv.x*=uRes.x/uRes.y;\n" +
-            "  vec3 brd=normalize(vec3(buv,1.5));\n" +
-            "  float bandPos=brd.y*1.9+0.30*brd.x+0.22*sin(uTime*0.0093);\n" +
-            "  float band=exp(-bandPos*bandPos*3.0);\n" +
-            "  float bAlong=brd.x*1.66-brd.y*0.26+uSeed.x*5.0;\n" +
-            "  float brn=vn(vec2(bAlong*2.2,3.7+uTime*0.0035));\n" +
-            "  float brn2=vn(vec2(bAlong*5.0,8.1));\n" +
-            "  float blenN=vn(vec2(bAlong*1.1,1.3));\n" +
-            "  float briftPos=bandPos*3.2+(brn-0.5)*1.6;\n" +
-            "  float brift=1.0-0.60*exp(-briftPos*briftPos*5.0)*(0.35+0.65*brn2);\n" +
-            "  float bbandAmp=0.55+1.05*blenN*blenN;\n" +
-            "  float spDens=(SP_BASE+(1.0-SP_BASE)*smoothstep(SP_SS_LO,SP_SS_HI,spDn))*(1.0+sdD)*(1.0+band*7.0*bbandAmp*brift);\n" +
-            // Three offset sprinkle fields cross-fade 120° apart over a slow
-            // cycle. The dots never translate (so no sub-pixel aliasing/shimmer),
-            // yet each field — and thus each lit pixel — fades fully dark for a
-            // third of the cycle, so nothing stays lit in place. The 120° spacing
-            // keeps the summed brightness near-constant (no global pulsing dip).
-            "  float spPh=uTime*0.26;\n" +
-            // In-band dots are brighter as well as denser (×1.8 at band core):
-            // count alone stayed below the visibility floor on the HDR panel.
-            "  vec3 spr=sprinkleLayer(scUv,SP_DEN,0.19,0.43,spDens)*max(0.0,sin(spPh));\n" +
-            "  spr+=sprinkleLayer(scUv,SP_DEN,0.67,0.21,spDens)*max(0.0,sin(spPh+2.0944));\n" +
-            "  spr+=sprinkleLayer(scUv,SP_DEN,0.41,0.83,spDens)*max(0.0,sin(spPh+4.1888));\n" +
+            "  sdD=smoothstep(SD_SS_LO,SD_SS_HI,sdField); sdD*=sdD;\n" +
+            "  spDn=vn(scUv*3.2+uSeed*2.0+vec2(5.7,3.1))*0.55+vn(scUv*8.5+uSeed*4.0+17.3)*0.45;\n" +
+            "#endif\n" +
+            // Comp-pass share of the band glow: unresolved starlight as
+            // native-res multiplicative grain over the band shape. Two vn
+            // octaves (~21/7.4 px at 1080p) fill the scale continuum the
+            // low-res gas halo cannot carry; squared sum deepens contrast.
+            // Added to col, not bg: bg feeds the HDR star-boost chain and the
+            // band must stay on the same output path it had in the gas pass.
+            "#ifdef ABL_NO_BANDGRAIN\n" +
+            "  if(false){\n" +
+            "#else\n" +
+            "  if(band>0.02&&T>0.03){\n" +
+            "#endif\n" +
+            // Grain range compressed to 0.45-1.35x (was 0.25-1.75x squared):
+            // the HDR panel has a hard visibility cliff near black, and a
+            // wide-range grain straddles it — bright patches blaze while dark
+            // patches vanish ("all or nothing" at any scalar gain). Narrow
+            // range + 0.19 gain puts the grain floor above the cliff and the
+            // peaks below the blaze point.
+            "    float gsum=vn(scUv*90.0+uSeed*7.0)*0.55+vn(scUv*260.0+uSeed*13.0+3.7)*0.45;\n" +
+            "    float bgrain=0.45+0.9*gsum;\n" +
+            "    vec3 bandCol=mix(vec3(0.20,0.185,0.205),vec3(0.245,0.205,0.165),bbulge);\n" +
+            // Same soft knee as the gas halo: compress only the top end.
+            "    float cx=band*bbandAmp*brift*bgrain;\n" +
+            "    cx/=1.0+max(cx-0.8,0.0)*0.5;\n" +
+            "    col+=T*bandCol*cx*0.20;\n" +
+            "  }\n" +
+            // Sprinkle boost trimmed 7.0 -> 3.0: coverage saturated long before
+            // 7x and the excess bought nothing (visible-dot ratio stayed ~1.4x);
+            // the carpet below now carries the in-band count.
+            "  float spDens=(SP_BASE+(1.0-SP_BASE)*smoothstep(SP_SS_LO,SP_SS_HI,spDn))*(1.0+sdD)*(1.0+band*3.0*bbandAmp*brift);\n" +
+            // OLED burn-in protection by occasional REPOSITIONING, not a
+            // continuous multi-field cross-fade. The old scheme blended three
+            // offset sprinkle fields (plus two carpet fields) EVERY frame — five
+            // grid evaluations per pixel — so each dot faded dark part of a ~24s
+            // cycle and nothing stayed lit in place. Instead evaluate ONE field
+            // of each whose grid offset jumps to a fresh spot every ~40s; a short
+            // fade to black across the epoch boundary hides the jump. Same
+            // anti-burn-in guarantee (no pixel is lit in one spot for long), at
+            // roughly one-third the shading cost. The dots hold still within an
+            // epoch, so there is still no sub-pixel translation shimmer.
+            "  float spEpoch=floor(uTime/40.0);\n" +
+            "  float spFrac=fract(uTime/40.0);\n" +
+            "  vec2 spJit=vec2(h1(vec2(spEpoch,7.3)),h1(vec2(spEpoch,19.1)))*13.0;\n" +
+            "  float spFade=smoothstep(0.0,0.05,spFrac)*(1.0-smoothstep(0.95,1.0,spFrac));\n" +
+            "  vec3 spr=vec3(0.0);\n" +
+            "#ifndef ABL_NO_SPRINKLE\n" +
+            "  spr+=sprinkleLayer(scUv,SP_DEN,0.19+spJit.x,0.43+spJit.y,spDens)*spFade;\n" +
+            "#endif\n" +
+            // Carpet: the band-only faint-star population, same reposition scheme.
+            "  float cpD=band*bbandAmp*brift*0.9;\n" +
+            "#ifdef ABL_NO_CARPET\n" +
+            "  if(false){\n" +
+            "#else\n" +
+            "  if(cpD>0.02){\n" +
+            "#endif\n" +
+            "    spr+=carpetLayer(scUv,0.31+spJit.x,0.57+spJit.y,cpD)*spFade;\n" +
+            "  }\n" +
             "  bg+=spr*(1.0+band*0.8);\n" +
             // NOVA: a once-per-session-scale event — one star swells to a
             // brilliant point over ~2s, holds, and fades over ~25s sliding
@@ -807,7 +979,11 @@ public class NebulaDream extends DreamService {
             // cell + intra-cell hash, and lay unclipped kernels in grid units
             // so the blaze zooms with its layer. Riding bg keeps it behind gas
             // and on the HDR star-boost chain.
+            "#ifdef ABL_NO_NOVA\n" +
+            "  if(false){\n" +
+            "#else\n" +
             "  if(uNova.z>0.0001){\n" +
+            "#endif\n" +
             "    float fn=(uNova.w<0.5)?f1:f2;\n" +
             "    vec2 sN=(uNova.w<0.5)?s1:s2;\n" +
             "    float caN=(uNova.w<0.5)?0.951:0.423; float saN=(uNova.w<0.5)?0.309:0.906;\n" +
@@ -842,21 +1018,34 @@ public class NebulaDream extends DreamService {
             "  starSig*=fadeIn;\n" +
             "  float pk=max(max(col.r,col.g),col.b);\n" +
             "  float luma=dot(col,vec3(0.30,0.40,0.30));\n" +
-            "  col=mix(col,vec3(luma),smoothstep(2.4,5.0,pk)*0.40);\n" +
+            // Bright gas desaturates toward its own luma: a hot emitter reads as
+            // white-hot, not as the same violet at ten times the intensity. Starts
+            // earlier and goes further than the old 2.4/5.0/0.40 — that left the
+            // top end fully saturated, which is what made blown masses scream.
+            "  col=mix(col,vec3(luma),smoothstep(1.6,4.4,pk)*0.72);\n" +
             "  vec3 base=col/(col+vec3(0.85));\n" +
             "  base=pow(max(base,vec3(0.0)),vec3(0.92))*1.12;\n" +
             "  vec3 starBase=starSig/(starSig+vec3(0.85));\n" +
             "  starBase=pow(max(starBase,vec3(0.0)),vec3(0.92))*1.12;\n" +
             "  float bk=step(1.0/255.0,max(max(base.r,base.g),base.b));\n" +
             "  base*=bk;\n" +
+            "#ifdef ABL_NO_HDR\n" +
+            "  if(false){\n" +
+            "#else\n" +
             "  if(uHdr>0.5){\n" +
+            "#endif\n" +
             "    vec3 lin=pow(base,vec3(2.2));\n" +
             "    vec3 starLin=pow(max(starBase,vec3(0.0)),vec3(2.2));\n" +
             "    float lum=max(max(col.r,col.g),col.b);\n" +
             "    float starLum=max(max(starSig.r,starSig.g),starSig.b);\n" +
-            "    float hi=max(lum-uHdrKnee,0.0);\n" +
-            "    float boostMax=max(uHdrMax-1.0,1.0);\n" +
-            "    float boost=boostMax*(1.0-exp(-(uHdrGain*hi)/boostMax));\n" +
+            // Gas path: later knee, slower ramp, lower ceiling. The exp curve is
+            // kept (it still rolls off cleanly) but GAS_HDR_GAIN stretches it so
+            // the gas separates across its whole range instead of saturating just
+            // past the knee — that separation IS the texture inside a bright mass.
+            "    float gasMax=1.0+(uHdrMax-1.0)*GAS_HDR_CEIL;\n" +
+            "    float hi=max(lum-uHdrKnee*GAS_HDR_KNEE,0.0);\n" +
+            "    float boostMax=max(gasMax-1.0,1.0);\n" +
+            "    float boost=boostMax*(1.0-exp(-(uHdrGain*GAS_HDR_GAIN*hi)/boostMax));\n" +
             "    vec3 hdr=lin*(1.0+boost);\n" +
             "    float starHi=max(starLum-uHdrKnee*0.55,0.0);\n" +
             "    float starBoostMax=max(uHdrStarMax-1.0,1.0);\n" +
@@ -864,7 +1053,8 @@ public class NebulaDream extends DreamService {
             "    float starMask=smoothstep(0.10,0.90,starLum);\n" +
             "    hdr+=starLin*starMask*starBoost;\n" +
             "    float hpk=max(max(hdr.r,hdr.g),hdr.b);\n" +
-            "    float peakMax=mix(uHdrMax,uHdrStarMax,starMask);\n" +
+            // Gas rolls off at gasMax, not the panel peak; stars still reach theirs.
+            "    float peakMax=mix(gasMax,uHdrStarMax,starMask);\n" +
             "    if(hpk>peakMax){\n" +
             "      float rolled=peakMax-(peakMax-1.0)*exp(-(hpk-1.0)/(peakMax-1.0));\n" +
             "      hdr*=rolled/max(hpk,1e-4);\n" +
@@ -877,16 +1067,24 @@ public class NebulaDream extends DreamService {
             "}\n";
 
         // Pass 1 (gas, low-res FBO): program + locations
-        private int progGas, gAPos, gUTime, gURes, gUNoise, gUZoom, gUSeed, gUStarScale;
+        private int progGas, gAPos, gUTime, gURes, gUNoise, gUZoom, gUSeed, gUStarScale, gUBandLut;
         // Pass 2 (composite, native res): program + locations
         private int progComp, cAPos, cUTime, cURes, cUZoom, cUHdr, cUHdrKnee, cUHdrGain, cUHdrMax,
-            cUHdrStarGain, cUHdrStarMax, cUStarFlare, cUSeed, cUGas, cUStarScale;
+            cUHdrStarGain, cUHdrStarMax, cUStarFlare, cUSeed, cUGas, cUStarScale, cUBandLut;
         private int noiseTex;            // v4: 3D noise texture
+        // 256x1 RGBA8 bake of the 1D along-band terms (see uBandLut in the
+        // shaders); refreshed each frame on the CPU — 256 cpuVn samples.
+        private int bandLutTex;
+        private ByteBuffer bandLutBuf;
         private int gasFbo, gasTex;      // v4: low-res gas render target
         private int gasW, gasH;
         private final java.util.Random sfRng = new java.util.Random();
-        private final float seedX = (float)Math.random();
-        private final float seedY = (float)Math.random();
+        // Random per launch in normal use. The harness pins them: the seed sets
+        // cloud coverage and band placement, so a fresh scene per run changes
+        // how far rays march before the early-out — that scene-to-scene spread
+        // is several ms and would otherwise drown the component deltas.
+        private final float seedX;
+        private final float seedY;
         private int sfSlot;
         private float sfStart = -1f, sfDur, sfMag, sfEnv, sfNext = 3f;
         private int sfLayer;
@@ -914,6 +1112,34 @@ public class NebulaDream extends DreamService {
             float c = cpuH1(ix, iy+1), d = cpuH1(ix+1, iy+1);
             return (a*(1-ux)+b*ux)*(1-uy) + (c*(1-ux)+d*ux)*uy;
         }
+        // Bake the along-band structure terms into the 256x1 LUT. Must stay
+        // formula-identical to what the shaders computed inline pre-LUT:
+        // R = rift meander vn, G = rift depth vn, B = star-cloud amp vn,
+        // A = bulge gaussian. The GL_TEXTURE_2D bind on unit 1 is left in
+        // place for both passes to sample.
+        private void updateBandLut(float t) {
+            float center = seedX * 5f;
+            float hsOff = (cpuFract(seedX * 61.7f + 0.137f) - 0.5f) * 8f;
+            bandLutBuf.position(0);
+            for (int i = 0; i < BAND_LUT_N; i++) {
+                float bAlong = center + (i / (float)(BAND_LUT_N - 1) - 0.5f) * (2f * BAND_LUT_HALF);
+                float rn   = cpuVn(bAlong * 2.2f, 3.7f + t * 0.0035f);
+                float rn2  = cpuVn(bAlong * 5.0f, 8.1f);
+                float lenN = cpuVn(bAlong * 1.1f, 1.3f);
+                float d = bAlong - center - hsOff;
+                float bulge = (float)Math.exp(-d * d * 1.4f);
+                bandLutBuf.put((byte)(Math.min(1f, Math.max(0f, rn))   * 255f + 0.5f));
+                bandLutBuf.put((byte)(Math.min(1f, Math.max(0f, rn2))  * 255f + 0.5f));
+                bandLutBuf.put((byte)(Math.min(1f, Math.max(0f, lenN)) * 255f + 0.5f));
+                bandLutBuf.put((byte)(Math.min(1f, Math.max(0f, bulge))* 255f + 0.5f));
+            }
+            bandLutBuf.position(0);
+            GLES20.glActiveTexture(GLES20.GL_TEXTURE1);
+            GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, bandLutTex);
+            GLES20.glTexSubImage2D(GLES20.GL_TEXTURE_2D, 0, 0, 0, BAND_LUT_N, 1,
+                GLES20.GL_RGBA, GLES20.GL_UNSIGNED_BYTE, bandLutBuf);
+        }
+
         private boolean cpuHasStar(float cellX, float cellY, float ox, float oy) {
             float h = cpuH1(cellX, cellY);
             if (h < STAR_FLOOR) return false;
@@ -931,7 +1157,9 @@ public class NebulaDream extends DreamService {
         private long fpsT0; private int fpsN; private long workAccNs;
         private int workSamples;
         private static final int GL_TIME_ELAPSED_EXT = 0x88BF;
+        // [0] = gas pass (low-res FBO), [1] = composite pass (native res).
         private int[] timerQuery;
+        private long gasAccNs, compAccNs;
         private boolean timerQueryPending;
         private boolean hasTimerQuery;
         private int screenW, screenH;
@@ -949,9 +1177,16 @@ public class NebulaDream extends DreamService {
         // visible without locking.
         private volatile HdrTuning hdrTuning;
         private final DisplayDiagnostics display;
+        // Perf-ablation harness (dev only): see NebulaDream.onAttachedToWindow.
+        private final String ablate;
+        private final String ablDefs;
+        private final boolean ablating;
+        private final float gasPin;
 
         NebulaRenderer(float zoomMul, int frameCapFps, HdrSurface hdr, float gasScale,
-                       HdrTuning hdrTuning, DisplayDiagnostics display) {
+                       HdrTuning hdrTuning, DisplayDiagnostics display, String ablate,
+                       float gasPin) {
+            this.gasPin = gasPin;
             this.zoomMul = zoomMul;
             this.frameMs = (frameCapFps > 0) ? Math.round(1000.0 / frameCapFps) : 0L;
             this.hdr = hdr;
@@ -959,6 +1194,30 @@ public class NebulaDream extends DreamService {
             this.gasScaleActive = gasScale;
             this.hdrTuning = hdrTuning;
             this.display = display;
+            this.ablate = (ablate == null) ? "" : ablate.trim();
+            this.ablating = !this.ablate.isEmpty();
+            StringBuilder sb = new StringBuilder();
+            for (String name : this.ablate.split(",")) {
+                name = name.trim().toUpperCase(java.util.Locale.US);
+                // NONE is the harness baseline: pins the gas scale, ablates nothing.
+                if (name.isEmpty() || name.equals("NONE")) continue;
+                sb.append("#define ABL_NO_").append(name).append(" 1\n");
+            }
+            this.ablDefs = sb.toString();
+            // Fixed scene for every variant in a sweep; random otherwise.
+            this.seedX = ablating ? 0.3137f : (float) Math.random();
+            this.seedY = ablating ? 0.6842f : (float) Math.random();
+            // Same for event scheduling: a flare igniting inside one run's
+            // measurement window and not another's is worth ~1ms of comp pass.
+            if (ablating) sfRng.setSeed(20260714L);
+        }
+
+        // Splice the ablation #defines in after the #version line (which must
+        // stay first) so the guards in the shader bodies see them.
+        private String ablate(String src) {
+            if (ablDefs.isEmpty()) return src;
+            int nl = src.indexOf('\n');
+            return src.substring(0, nl + 1) + ablDefs + src.substring(nl + 1);
         }
 
         void setHdrTuning(HdrTuning t) { if (t != null) this.hdrTuning = t; }
@@ -972,7 +1231,7 @@ public class NebulaDream extends DreamService {
             gasFbo=0; gasTex=0; // ids are stale on a new context; recreated in onSurfaceChanged
             lastDrawMs=0;
 
-            progGas = buildProg(VERT_ES3, FRAG_GAS);
+            progGas = buildProg(VERT_ES3, ablate(FRAG_GAS));
             gAPos   = GLES20.glGetAttribLocation(progGas,"aPos");
             gUTime  = GLES20.glGetUniformLocation(progGas,"uTime");
             gURes   = GLES20.glGetUniformLocation(progGas,"uRes");
@@ -980,8 +1239,9 @@ public class NebulaDream extends DreamService {
             gUZoom  = GLES20.glGetUniformLocation(progGas,"uZoom");
             gUSeed  = GLES20.glGetUniformLocation(progGas,"uSeed");
             gUStarScale = GLES20.glGetUniformLocation(progGas,"uStarScale");
+            gUBandLut = GLES20.glGetUniformLocation(progGas,"uBandLut");
 
-            progComp = buildProg(VERT_ES3, FRAG_COMP);
+            progComp = buildProg(VERT_ES3, ablate(FRAG_COMP));
             cAPos    = GLES20.glGetAttribLocation(progComp,"aPos");
             cUTime   = GLES20.glGetUniformLocation(progComp,"uTime");
             cURes    = GLES20.glGetUniformLocation(progComp,"uRes");
@@ -998,13 +1258,27 @@ public class NebulaDream extends DreamService {
             cUNovaP  = GLES20.glGetUniformLocation(progComp,"uNovaP");
             cUGas    = GLES20.glGetUniformLocation(progComp,"uGas");
             cUStarScale = GLES20.glGetUniformLocation(progComp,"uStarScale");
+            cUBandLut = GLES20.glGetUniformLocation(progComp,"uBandLut");
 
             noiseTex = buildNoiseTexture(64); // re-upload each context (ids go stale); CPU gen is cached
+            int[] lutId = new int[1];
+            GLES20.glGenTextures(1, lutId, 0);
+            bandLutTex = lutId[0];
+            GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, bandLutTex);
+            GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MIN_FILTER, GLES20.GL_LINEAR);
+            GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MAG_FILTER, GLES20.GL_LINEAR);
+            GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_S, GLES20.GL_CLAMP_TO_EDGE);
+            GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_T, GLES20.GL_CLAMP_TO_EDGE);
+            if (bandLutBuf == null) {
+                bandLutBuf = ByteBuffer.allocateDirect(BAND_LUT_N * 4).order(ByteOrder.nativeOrder());
+            }
+            GLES20.glTexImage2D(GLES20.GL_TEXTURE_2D, 0, GLES20.GL_RGBA, BAND_LUT_N, 1, 0,
+                GLES20.GL_RGBA, GLES20.GL_UNSIGNED_BYTE, null);
             String exts = GLES20.glGetString(GLES20.GL_EXTENSIONS);
             hasTimerQuery = exts != null && exts.contains("GL_EXT_disjoint_timer_query");
             if (hasTimerQuery) {
-                timerQuery = new int[1];
-                GLES30.glGenQueries(1, timerQuery, 0);
+                timerQuery = new int[2];
+                GLES30.glGenQueries(2, timerQuery, 0);
             } else {
                 Log.w(TAG, "GL_EXT_disjoint_timer_query unavailable; GPU work timing disabled");
             }
@@ -1049,14 +1323,18 @@ public class NebulaDream extends DreamService {
             }
             lastDrawMs=SystemClock.elapsedRealtime();
 
-            // Collect pending GPU timer query result (non-blocking).
+            // Collect pending GPU timer query results (non-blocking). The comp
+            // query is issued last, so its availability implies the gas one too.
             if (hasTimerQuery && timerQueryPending) {
                 int[] avail = new int[1];
-                GLES30.glGetQueryObjectuiv(timerQuery[0], GLES30.GL_QUERY_RESULT_AVAILABLE, avail, 0);
+                GLES30.glGetQueryObjectuiv(timerQuery[1], GLES30.GL_QUERY_RESULT_AVAILABLE, avail, 0);
                 if (avail[0] != 0) {
                     int[] gpuNs = new int[1];
                     GLES30.glGetQueryObjectuiv(timerQuery[0], GLES30.GL_QUERY_RESULT, gpuNs, 0);
-                    workAccNs += gpuNs[0];
+                    gasAccNs += gpuNs[0];
+                    GLES30.glGetQueryObjectuiv(timerQuery[1], GLES30.GL_QUERY_RESULT, gpuNs, 0);
+                    compAccNs += gpuNs[0];
+                    workAccNs = gasAccNs + compAccNs;
                     workSamples++;
                     timerQueryPending = false;
                 }
@@ -1067,9 +1345,15 @@ public class NebulaDream extends DreamService {
             if (fpsT0==0) fpsT0=lastDrawMs;
             else if (lastDrawMs-fpsT0>=2000) {
                 float workMs = (workSamples > 0) ? workAccNs/(float)workSamples/1e6f : 0f;
+                float gasMs  = (workSamples > 0) ? gasAccNs/(float)workSamples/1e6f : 0f;
+                float compMs = (workSamples > 0) ? compAccNs/(float)workSamples/1e6f : 0f;
                 Log.i(TAG,"SPIKE cadence="+String.format("%.1f",fpsN*1000f/(lastDrawMs-fpsT0))
                     +"fps gpuWork="+String.format("%.1f",workMs)
-                    +"ms surface="+screenW+"x"+screenH
+                    +"ms gasMs="+String.format("%.2f",gasMs)
+                    +" compMs="+String.format("%.2f",compMs)
+                    +" n="+workSamples
+                    +" ablate="+(ablating?ablate:"none")
+                    +" surface="+screenW+"x"+screenH
                     +" gas="+gasW+"x"+gasH
                     +" gasScale="+String.format("%.2f",gasScaleActive)
                     +" hdr="+(hdr!=null&&hdr.hdrActive)
@@ -1077,12 +1361,18 @@ public class NebulaDream extends DreamService {
                     +" requestedMode="+((display==null)?"none":display.requestedMode)
                     +" hdrCaps="+((display==null)?"unknown":display.hdrCaps)
                     +" hdrRatio="+((display==null)?"n/a":display.hdrRatioLabel()));
-                if (SystemClock.elapsedRealtime() - startMs > 6000) adaptGasScale(workMs);
-                fpsN=0; fpsT0=lastDrawMs; workAccNs=0; workSamples=0;
+                // The harness pins the gas scale: adapting it mid-sweep would
+                // resize the FBO between variants and corrupt the comparison.
+                if (!ablating && SystemClock.elapsedRealtime() - startMs > 6000) adaptGasScale(workMs);
+                fpsN=0; fpsT0=lastDrawMs; workAccNs=0; gasAccNs=0; compAccNs=0; workSamples=0;
             }
-            boolean sampleWork = hasTimerQuery && !timerQueryPending && (fpsN % 20) == 0;
+            // Sample every frame while ablating (tight error bars on the deltas);
+            // 1-in-20 otherwise, which is all the adaptive scaler needs.
+            boolean sampleWork = hasTimerQuery && !timerQueryPending
+                && (ablating || (fpsN % 20) == 0);
 
             float t=(SystemClock.elapsedRealtime()-startMs)/1000f;
+            updateBandLut(t); // binds the LUT on unit 1 for both passes
 
             // ── PASS 1: raymarch the gas into the low-res FBO ────────────────
             if (sampleWork) GLES30.glBeginQuery(GL_TIME_ELAPSED_EXT, timerQuery[0]);
@@ -1097,12 +1387,16 @@ public class NebulaDream extends DreamService {
             GLES20.glActiveTexture(GLES20.GL_TEXTURE0);
             GLES30.glBindTexture(GLES30.GL_TEXTURE_3D,noiseTex);
             GLES20.glUniform1i(gUNoise,0);
+            GLES20.glUniform1i(gUBandLut,1);
             quadBuf.position(0);
             GLES20.glVertexAttribPointer(gAPos,2,GLES20.GL_FLOAT,false,8,quadBuf);
             GLES20.glEnableVertexAttribArray(gAPos);
             GLES20.glDrawArrays(GLES20.GL_TRIANGLES,0,6);
 
+            if (sampleWork) GLES30.glEndQuery(GL_TIME_ELAPSED_EXT);
+
             // ── PASS 2: composite at native res (sharp stars/haze/flare) ─────
+            if (sampleWork) GLES30.glBeginQuery(GL_TIME_ELAPSED_EXT, timerQuery[1]);
             GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER,0);
             GLES20.glViewport(0,0,screenW,screenH);
             GLES20.glUseProgram(progComp);
@@ -1126,6 +1420,7 @@ public class NebulaDream extends DreamService {
             GLES20.glActiveTexture(GLES20.GL_TEXTURE0);
             GLES20.glBindTexture(GLES20.GL_TEXTURE_2D,gasTex);
             GLES20.glUniform1i(cUGas,0);
+            GLES20.glUniform1i(cUBandLut,1);
             quadBuf.position(0);
             GLES20.glVertexAttribPointer(cAPos,2,GLES20.GL_FLOAT,false,8,quadBuf);
             GLES20.glEnableVertexAttribArray(cAPos);
@@ -1228,6 +1523,7 @@ public class NebulaDream extends DreamService {
         }
 
         private float initialGasScale(int w, int h) {
+            if (gasPin > 0f) return gasPin; // harness: fixed FBO across all variants
             float basePixels = 1920f * 1080f;
             float windowPixels = Math.max(1f, (float) w * (float) h);
             float thermalScale = (float) Math.sqrt(basePixels / windowPixels);
@@ -1241,7 +1537,18 @@ public class NebulaDream extends DreamService {
             if (workMs > budget && gasScaleActive > 0.101f) {
                 float factor = (float) Math.sqrt(Math.max(0.25f, budget / workMs)) * 0.96f;
                 next = gasScaleActive * factor;
-            } else if (workMs < frameMs * 0.58f && gasScaleActive < gasScaleMax - 0.005f) {
+            } else if (workMs < budget - 4.5f && gasScaleActive < gasScaleMax - 0.005f) {
+                // Grow whenever there is >=3ms of headroom under the shrink
+                // budget (the old frameMs*0.58 threshold was unreachable at
+                // typical ~31ms work, so a thermally-lowered startup scale
+                // stuck for the whole session — dither artifacts worsen as
+                // gas resolution drops, so recovering matters). The 4.5ms
+                // deadband keeps it from flapping against the shrink branch
+                // (3ms was measured to oscillate 0.28<->0.30 on a hot
+                // Shield, reallocating the FBO every few seconds). Step must
+                // be 1.06+: below that, at scales <=0.25 the move is under
+                // the 0.01 delta gate below and the grow silently never
+                // happens.
                 next = gasScaleActive * 1.06f;
             }
             next = clamp(next, 0.10f, gasScaleMax);

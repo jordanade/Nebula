@@ -13,7 +13,7 @@ import android.preference.PreferenceManager;
 final class Prefs {
 
     static final String HDR_MODE      = "hdr_mode";      // auto | off
-    static final String RENDER_SCALE  = "render_scale";  // 0.50 .. 1.00
+    static final String RENDER_SCALE  = "render_scale";  // 0.10 .. 1.00 (default 0.30)
     static final String FRAME_CAP     = "frame_cap";     // fps, 0 = uncapped
     static final String ZOOM_SPEED    = "zoom_speed";    // zSpd
 
@@ -36,7 +36,7 @@ final class Prefs {
         return (v == null) ? HDR_AUTO : v;
     }
 
-    float renderScale() { return clampF(getIntPref(RENDER_SCALE, 45) / 100f, 0.10f, 1.0f); }
+    float renderScale() { return clampF(getIntPref(RENDER_SCALE, 30) / 100f, 0.10f, 1.0f); }
 
     float zoomMul() {
         int s = getIntPref(ZOOM_SPEED, 4);
