@@ -1151,6 +1151,27 @@ public class NebulaDream extends DreamService {
             float thresh = STAR_CEIL - dens*STAR_RANGE;
             return h > thresh;
         }
+        // Does grid cell (cellX,cellY) of a layer project onto the visible frame?
+        // Inverts the shader's star transform: cell -> grid uv s = sr/zoom+0.5+seed,
+        // where sr = R(sc) is the screen coord rotated by the layer's (ca,sa). We
+        // undo the rotation and check |sc| against the frame bounds (sc.x in
+        // ±0.5, sc.y in ±0.5*H/W). The flare/nova picker sampled an axis-aligned
+        // box that ignores this rotation, so without the check many events (esp.
+        // the ~65°-rotated layer 1) landed off-screen and were never seen.
+        private boolean cpuOnScreen(float cellX, float cellY, float ox, float oy,
+                                    float ca, float sa, float zoom) {
+            if (screenW <= 0 || screenH <= 0) return true;
+            float den = STAR_DEN * starScale;
+            float s1x = (cellX + 0.5f - ox) / den;
+            float s1y = (cellY + 0.5f - oy) / den;
+            float srx = (s1x - 0.5f - seedX) * zoom;
+            float sry = (s1y - 0.5f - seedY) * zoom;
+            float scx =  ca * srx + sa * sry;   // R^T(sr): undo the layer rotation
+            float scy = -sa * srx + ca * sry;
+            float aspect = (float) screenH / screenW;
+            float m = 0.94f; // keep the event a touch inside the frame edge
+            return Math.abs(scx) < 0.5f * m && Math.abs(scy) < 0.5f * aspect * m;
+        }
         private FloatBuffer quadBuf;
         private long startMs;
         private long lastDrawMs;
@@ -1454,13 +1475,19 @@ public class NebulaDream extends DreamService {
                 float den = STAR_DEN * starScale; // match the shader's scaled grid
                 float cxCenter = (0.5f + seedX) * den + lox;
                 float cyCenter = (0.5f + seedY) * den + loy;
-                float halfSpanX = (den / 2f) / zoom;
-                float aspect = screenH > 0 ? (float)screenH / screenW : 0.5625f;
-                float halfSpanY = halfSpanX * aspect;
+                // Generous square candidate box (1.3x) so the layer's rotated
+                // on-screen rect is fully covered; cpuOnScreen then rejects the
+                // corners that fall outside the frame. Prefer an on-screen star,
+                // but always leave sfCell on a real star so the flare isn't blank.
+                float span = 1.3f * (den / 2f) / zoom;
+                float ca = (sfLayer == 0) ? 0.951f : 0.423f;
+                float sa = (sfLayer == 0) ? 0.309f : 0.906f;
                 for (int attempt = 0; attempt < 200; attempt++) {
-                    sfCellX = (float)Math.floor(cxCenter - halfSpanX + sfRng.nextFloat() * 2f * halfSpanX);
-                    sfCellY = (float)Math.floor(cyCenter - halfSpanY + sfRng.nextFloat() * 2f * halfSpanY);
-                    if (cpuHasStar(sfCellX, sfCellY, lox, loy)) break;
+                    float cx = (float)Math.floor(cxCenter - span + sfRng.nextFloat() * 2f * span);
+                    float cy = (float)Math.floor(cyCenter - span + sfRng.nextFloat() * 2f * span);
+                    if (!cpuHasStar(cx, cy, lox, loy)) continue;
+                    sfCellX = cx; sfCellY = cy; // fallback: last star found
+                    if (cpuOnScreen(cx, cy, lox, loy, ca, sa, zoom)) break;
                 }
                 sfNext = t + sfDur + FLARE_GAP_MIN + sfRng.nextFloat() * FLARE_GAP_RNG;
                 Log.i(TAG,"FLARE cell="+sfCellX+","+sfCellY+" layer="+sfLayer+" mag="+String.format("%.3f",sfMag));
@@ -1496,13 +1523,16 @@ public class NebulaDream extends DreamService {
                 float den = STAR_DEN * starScale;
                 float cxCenter = (0.5f + seedX) * den + lox;
                 float cyCenter = (0.5f + seedY) * den + loy;
-                float halfSpanX = (den / 2f) / zoom;
-                float aspect = screenH > 0 ? (float)screenH / screenW : 0.5625f;
-                float halfSpanY = halfSpanX * aspect;
+                // On-screen placement (same rotation-aware fix as the flare).
+                float span = 1.3f * (den / 2f) / zoom;
+                float ca = (nvLayer == 0) ? 0.951f : 0.423f;
+                float sa = (nvLayer == 0) ? 0.309f : 0.906f;
                 for (int attempt = 0; attempt < 200; attempt++) {
-                    nvCellX = (float)Math.floor(cxCenter - halfSpanX + sfRng.nextFloat() * 2f * halfSpanX);
-                    nvCellY = (float)Math.floor(cyCenter - halfSpanY + sfRng.nextFloat() * 2f * halfSpanY);
-                    if (cpuHasStar(nvCellX, nvCellY, lox, loy)) break;
+                    float cx = (float)Math.floor(cxCenter - span + sfRng.nextFloat() * 2f * span);
+                    float cy = (float)Math.floor(cyCenter - span + sfRng.nextFloat() * 2f * span);
+                    if (!cpuHasStar(cx, cy, lox, loy)) continue;
+                    nvCellX = cx; nvCellY = cy;
+                    if (cpuOnScreen(cx, cy, lox, loy, ca, sa, zoom)) break;
                 }
                 nvNext = t + nvDur + NOVA_GAP_MIN + sfRng.nextFloat() * NOVA_GAP_RNG;
                 Log.i(TAG,"NOVA cell="+nvCellX+","+nvCellY+" layer="+nvLayer+" mag="+String.format("%.3f",nvMag)+" dur="+String.format("%.1f",nvDur));
