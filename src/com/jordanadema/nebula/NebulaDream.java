@@ -153,12 +153,14 @@ public class NebulaDream extends DreamService {
         private static final float SD_W_HI     = 0.45f;
         private static final float SD_SS_LO    = 0.38f;
         private static final float SD_SS_HI    = 0.58f;
-        // 1.6x the historical population (0.38/0.92): 2x was tried and cost
-        // ~1ms too much on the Shield — star count is only free until the
-        // extra lit cells start shading real pixels.
-        private static final float STAR_FLOOR  = 0.24f;
-        private static final float STAR_CEIL   = 0.78f;
-        private static final float STAR_RANGE  = 0.54f;
+        // ~1.9x the historical population (0.38/0.92). Bumped +20% over the
+        // prior 0.24/0.78/0.54: each threshold is set so (1 - thresh) scales by
+        // 1.2 across the whole density ramp, i.e. 20% more lit cells at every
+        // density. 2x was once ~1ms too much, but the sky layer since freed
+        // comp-pass headroom, so the extra lit cells fit under budget.
+        private static final float STAR_FLOOR  = 0.088f;
+        private static final float STAR_CEIL   = 0.736f;
+        private static final float STAR_RANGE  = 0.648f;
 
         // Star grid and zoom
         private static final float STAR_DEN    = 80.0f;
@@ -185,6 +187,15 @@ public class NebulaDream extends DreamService {
         private static final float SP_BASE     = 0.18f; // raised floor: endless faint stars beneath the bright ones
         private static final float SP_SS_LO    = 0.25f;
         private static final float SP_SS_HI    = 0.65f;
+        // Extra band-only sprinkle field on a FINER grid than SP_DEN. The main
+        // SP_DEN grid saturates in the band core (every cell already lit), so
+        // raising its density there adds nothing — a second, finer field is the
+        // only way to raise the in-band count further. Baked into the sky layer,
+        // so it costs nothing per frame. SP_BAND_BRI dims it so more dots don't
+        // read as a brighter band. Tune SP_BAND_DEN for count, SP_BAND_BRI for
+        // brightness. (When the sky layer is off it is computed live instead.)
+        private static final float SP_BAND_DEN = 1450.0f;
+        private static final float SP_BAND_BRI = 0.75f;
         // Faint-star carpet (band only): coarser grid than the sprinkles but
         // RESOLVED dots — ~0.6px cores at 1080p (CP_K sets radius ~0.15 cell).
         // v4.9.0 measurement: boosting sub-pixel sprinkle counts 7x moved the
@@ -219,19 +230,21 @@ public class NebulaDream extends DreamService {
         // the mass covered. Gas now climbs progressively and tops out partway up
         // the panel's range, leaving the top to stars, novas and the cores: a few
         // highlights blaze, large areas do not.
-        private static final float GAS_HDR_CEIL = 0.37f; // share of panel headroom the gas may reach
+        private static final float GAS_HDR_CEIL = 0.2272f; // share of panel headroom the gas may reach (0.37 -> 0.3145 -> 0.2673 -> 0.2272, each -15%)
         private static final float GAS_HDR_KNEE = 1.25f; // gas starts boosting later than stars
         private static final float GAS_HDR_GAIN = 0.27f; // and climbs far more slowly once it does
 
         // Star rendering
         private static final float SPIKE_THRESH = 0.65f;
 
-        // Flare scheduling: rare events, not texture. Minutes-long gaps, and
-        // every flare that does fire is long and bright enough to be witnessed.
+        // Flare scheduling: rare events, not texture. Gaps trimmed from 40-180s
+        // to 24-104s (2026-07-14) alongside the on-screen placement fix — most
+        // flares used to fire off-screen (the candidate box ignored the star
+        // layer's rotation), so the visible rate was far below the schedule.
         private static final float FLARE_DUR_MIN = 4.0f;
         private static final float FLARE_DUR_RNG = 4.0f;
-        private static final float FLARE_GAP_MIN = 40.0f;
-        private static final float FLARE_GAP_RNG = 140.0f;
+        private static final float FLARE_GAP_MIN = 24.0f;
+        private static final float FLARE_GAP_RNG = 80.0f;
 
         // Nova scheduling: the rarest event. One star swells to a brilliant HDR
         // point (~2s rise), holds, and fades over ~25s with a white->amber
@@ -296,6 +309,8 @@ public class NebulaDream extends DreamService {
             "#define SP_BASE "     + SP_BASE     + "\n" +
             "#define SP_SS_LO "    + SP_SS_LO    + "\n" +
             "#define SP_SS_HI "    + SP_SS_HI    + "\n" +
+            "#define SP_BAND_DEN " + SP_BAND_DEN + "\n" +
+            "#define SP_BAND_BRI " + SP_BAND_BRI + "\n" +
             "#define CP_DEN "      + CP_DEN      + "\n" +
             "#define CP_K "        + CP_K        + "\n" +
             "#define CP_BRI "      + CP_BRI      + "\n" +
@@ -484,7 +499,11 @@ public class NebulaDream extends DreamService {
             "        float ds=densFar(p);\n" +
             "        float dlit=densFar(p+ldir*0.34);\n" +
             "        float lit=clamp((ds-dlit)*9.0,0.0,1.0);\n" +
-            "        emit*=mix(1.0,0.38+2.15*lit,nearAmt);\n" +
+            // Softened directional relief: an emission nebula glows from within
+            // and has no true sunlit/shadowed side, so this is only a faint depth
+            // cue now — near side 0.70..1.60x (was a harsh 0.38..2.53x that read
+            // as an unrealistic cloud shadow when a mass loomed close).
+            "        emit*=mix(1.0,0.70+0.90*lit,nearAmt);\n" +
             // EDGE: ionization-front rim — fires when the ray crosses a boundary
             // (density jumping from ~nothing to substantial between samples).
             "        float rim=smoothstep(0.015,0.16,d-dPrev)*clamp(1.0-dPrev*6.0,0.0,1.0);\n" +
@@ -608,7 +627,9 @@ public class NebulaDream extends DreamService {
             // top end, the body of the band passes through untouched.
             "  float bx=band*(0.35+0.65*bandGrain)*bandAmp*rift;\n" +
             "  bx/=1.0+max(bx-0.8,0.0)*0.5;\n" +
-            "  col+=T*mix(vec3(0.20,0.185,0.205),vec3(0.245,0.205,0.165),bulge)*bx*0.12;\n" +
+            // Broad band halo lowered 0.12 -> 0.0725 to match the comp grain drop
+            // (the resolved sprinkle field now carries the band's brightness).
+            "  col+=T*mix(vec3(0.20,0.185,0.205),vec3(0.245,0.205,0.165),bulge)*bx*0.0725;\n" +
             "#endif\n" +
             "  col+=T*hz;\n" +
             "  fragColor=vec4(col,T);\n" +
@@ -639,6 +660,13 @@ public class NebulaDream extends DreamService {
             "uniform sampler2D uBandLut;\n" + // shared with the gas pass; see there
             "uniform vec2 uSeed;\n" +
             "uniform sampler2D uGas;\n" +
+            // Baked sky layer: sprinkles+carpet in rgb, band-grain noise in a.
+            // uSky is the current epoch's bake, uSkyPrev the previous one; the
+            // sprinkle dots cross-dissolve between them (uSprBlend 0->1) at each
+            // epoch boundary so the burn-in reposition never blinks.
+            "uniform sampler2D uSky;\n" +
+            "uniform sampler2D uSkyPrev;\n" +
+            "uniform float uSprBlend;\n" +
             "in vec2 vUv;\n" +
             "out vec4 fragColor;\n" +
             // ── Stars + pointillistic galaxy haze, ported faithfully from v3.1 ──
@@ -700,7 +728,7 @@ public class NebulaDream extends DreamService {
             "  if(h<thresh) return vec3(0.0);\n" +
             "  vec2 df=f-h2(cell+3.7);\n" +
             "  float d2=dot(df,df);\n" +
-            "  float hm=h1(cell+7.7); float mag=0.18+0.82*hm*hm*hm*hm;\n" + // 4th power: real counts pile up at the faint end
+            "  float hm=h1(cell+7.7); float mag=0.16+0.84*hm*hm*hm;\n" + // cubic (was quartic) + lower floor: wider brightness spread, still faint-skewed
             "  vec2 fc=cell-vec2(uStarFlare.x,uStarFlare.y); float isFlare=step(abs(lid-uStarFlare.w),0.5)*(1.0-step(0.25,dot(fc,fc)));\n" +
             "  float fl=isFlare*uStarFlare.z;\n" +
             "  float fl2=fl*fl;\n" +
@@ -904,73 +932,27 @@ public class NebulaDream extends DreamService {
             "  bg+=galaxyBigLayer(gs1,STAR_DEN*uStarScale*0.075,L0_OX,L0_OY)*gf1;\n" +
             "  bg+=galaxyBigLayer(gs2,STAR_DEN*uStarScale*0.075,L1_OX,L1_OY)*gf2;\n" +
             "#endif\n" +
-            "  vec2 scUv=sc+0.5;\n" +
-            "  float sdD=0.0; float spDn=0.0;\n" +
-            "#ifndef ABL_NO_SPRINKLE\n" +
-            "  vec2 sdUv=(f1>=f2)?s1:s2;\n" +
-            "  float sdOx=(f1>=f2)?L0_OX:L1_OX; float sdOy=(f1>=f2)?L0_OY:L1_OY;\n" +
-            "  vec2 sdGp=sdUv*STAR_DEN*uStarScale+vec2(sdOx,sdOy);\n" +
-            "  float sdField=vn(sdGp*SD_FREQ_LO+vec2(sdOx*0.1,sdOy*0.1))*SD_W_LO+vn(sdGp*SD_FREQ_HI+11.0)*SD_W_HI;\n" +
-            "  sdD=smoothstep(SD_SS_LO,SD_SS_HI,sdField); sdD*=sdD;\n" +
-            "  spDn=vn(scUv*3.2+uSeed*2.0+vec2(5.7,3.1))*0.55+vn(scUv*8.5+uSeed*4.0+17.3)*0.45;\n" +
-            "#endif\n" +
-            // Comp-pass share of the band glow: unresolved starlight as
-            // native-res multiplicative grain over the band shape. Two vn
-            // octaves (~21/7.4 px at 1080p) fill the scale continuum the
-            // low-res gas halo cannot carry; squared sum deepens contrast.
-            // Added to col, not bg: bg feeds the HDR star-boost chain and the
-            // band must stay on the same output path it had in the gas pass.
-            "#ifdef ABL_NO_BANDGRAIN\n" +
-            "  if(false){\n" +
-            "#else\n" +
+            // Milky-Way band grain: the two expensive noise octaves are baked
+            // into uSky.a; the band structure (tint/rift/soft-knee) is re-applied
+            // live here so it stays exact. Kept on the gas output path (added to
+            // col), as it was before the sky layer.
             "  if(band>0.02&&T>0.03){\n" +
-            "#endif\n" +
-            // Grain range compressed to 0.45-1.35x (was 0.25-1.75x squared):
-            // the HDR panel has a hard visibility cliff near black, and a
-            // wide-range grain straddles it — bright patches blaze while dark
-            // patches vanish ("all or nothing" at any scalar gain). Narrow
-            // range + 0.19 gain puts the grain floor above the cliff and the
-            // peaks below the blaze point.
-            "    float gsum=vn(scUv*90.0+uSeed*7.0)*0.55+vn(scUv*260.0+uSeed*13.0+3.7)*0.45;\n" +
-            "    float bgrain=0.45+0.9*gsum;\n" +
+            "    float bgrain=texture(uSky,vUv).a;\n" +
             "    vec3 bandCol=mix(vec3(0.20,0.185,0.205),vec3(0.245,0.205,0.165),bbulge);\n" +
-            // Same soft knee as the gas halo: compress only the top end.
             "    float cx=band*bbandAmp*brift*bgrain;\n" +
             "    cx/=1.0+max(cx-0.8,0.0)*0.5;\n" +
-            "    col+=T*bandCol*cx*0.20;\n" +
+            // Diffuse band grain lowered 0.20 -> 0.105: the denser resolved
+            // sprinkle field now carries the band's presence, so the smooth glow
+            // no longer needs to. (Walked down to 0.08, then back up halfway.)
+            "    col+=T*bandCol*cx*0.105;\n" +
             "  }\n" +
-            // Sprinkle boost trimmed 7.0 -> 3.0: coverage saturated long before
-            // 7x and the excess bought nothing (visible-dot ratio stayed ~1.4x);
-            // the carpet below now carries the in-band count.
-            "  float spDens=(SP_BASE+(1.0-SP_BASE)*smoothstep(SP_SS_LO,SP_SS_HI,spDn))*(1.0+sdD)*(1.0+band*3.0*bbandAmp*brift);\n" +
-            // OLED burn-in protection by occasional REPOSITIONING, not a
-            // continuous multi-field cross-fade. The old scheme blended three
-            // offset sprinkle fields (plus two carpet fields) EVERY frame — five
-            // grid evaluations per pixel — so each dot faded dark part of a ~24s
-            // cycle and nothing stayed lit in place. Instead evaluate ONE field
-            // of each whose grid offset jumps to a fresh spot every ~40s; a short
-            // fade to black across the epoch boundary hides the jump. Same
-            // anti-burn-in guarantee (no pixel is lit in one spot for long), at
-            // roughly one-third the shading cost. The dots hold still within an
-            // epoch, so there is still no sub-pixel translation shimmer.
-            "  float spEpoch=floor(uTime/40.0);\n" +
-            "  float spFrac=fract(uTime/40.0);\n" +
-            "  vec2 spJit=vec2(h1(vec2(spEpoch,7.3)),h1(vec2(spEpoch,19.1)))*13.0;\n" +
-            "  float spFade=smoothstep(0.0,0.05,spFrac)*(1.0-smoothstep(0.95,1.0,spFrac));\n" +
-            "  vec3 spr=vec3(0.0);\n" +
-            "#ifndef ABL_NO_SPRINKLE\n" +
-            "  spr+=sprinkleLayer(scUv,SP_DEN,0.19+spJit.x,0.43+spJit.y,spDens)*spFade;\n" +
-            "#endif\n" +
-            // Carpet: the band-only faint-star population, same reposition scheme.
-            "  float cpD=band*bbandAmp*brift*0.9;\n" +
-            "#ifdef ABL_NO_CARPET\n" +
-            "  if(false){\n" +
-            "#else\n" +
-            "  if(cpD>0.02){\n" +
-            "#endif\n" +
-            "    spr+=carpetLayer(scUv,0.31+spJit.x,0.57+spJit.y,cpD)*spFade;\n" +
-            "  }\n" +
-            "  bg+=spr*(1.0+band*0.8);\n" +
+            // Sprinkles + carpet: baked (frozen per 40s epoch, incl. the finer
+            // band-only field) into uSky.rgb. At each epoch the pattern jumps to
+            // a new position for OLED burn-in protection; rather than blink the
+            // whole field to black to hide the jump (very visible once the band
+            // is dense), cross-dissolve from the previous bake to the current
+            // one. mix (not add) keeps total density constant through the blend.
+            "  bg+=mix(texture(uSkyPrev,vUv).rgb,texture(uSky,vUv).rgb,uSprBlend);\n" +
             // NOVA: a once-per-session-scale event — one star swells to a
             // brilliant point over ~2s, holds, and fades over ~25s sliding
             // white -> amber. Rendered here as a screen-space overlay (NOT in
@@ -1064,6 +1046,124 @@ public class NebulaDream extends DreamService {
             "    base+=(h1(gl_FragCoord.xy)-0.5)/255.0*bk;\n" +
             "    fragColor=vec4(clamp(base,0.0,1.0),1.0);\n" +
             "  }\n" +
+            "}\n";
+
+        // ── SKY BAKE PASS: renders the screen-space, slowly-varying subset of
+        // the composite — sprinkles + carpet + the
+        // Milky-Way grain noise — into a full-res FBO. Re-baked only when the
+        // sprinkle epoch changes (~40s), so ~6ms/frame of procedural evaluation
+        // becomes one texture fetch in the comp pass. Output: rgb = combined
+        // sprinkle+carpet emission (star path, epoch-faded live in comp),
+        // a = raw band-grain noise (gas path; band structure re-applied live in
+        // comp so tint/rift/knee stay exact). Helpers duplicated from FRAG_COMP.
+        private static final String FRAG_SKY =
+            "#version 300 es\n" +
+            COMP_DEFS +
+            "precision highp float;\n" +
+            "uniform float uTime;\n" +
+            "uniform vec2  uRes;\n" +
+            "uniform float uZoom;\n" +
+            "uniform float uStarScale;\n" +
+            "uniform vec2 uSeed;\n" +
+            "uniform sampler2D uBandLut;\n" +
+            "in vec2 vUv;\n" +
+            "out vec4 fragColor;\n" +
+            "float h1(vec2 i){ vec2 p=fract(i*vec2(0.1031,0.1030)); p+=dot(p,p+19.19); return fract(p.x*p.y); }\n" +
+            "vec2 h2(vec2 i){ vec2 p=fract(i*vec2(0.1031,0.1030)); p+=dot(p,p.yx+19.19); return fract((p.xx+p.yx)*p.xy); }\n" +
+            "float vn(vec2 p){\n" +
+            "  vec2 i=floor(p),f=fract(p);\n" +
+            "  vec2 u=f*f*f*(f*(f*6.0-15.0)+10.0);\n" +
+            "  return mix(mix(h1(i),h1(i+vec2(1,0)),u.x),\n" +
+            "             mix(h1(i+vec2(0,1)),h1(i+vec2(1,1)),u.x),u.y);\n" +
+            "}\n" +
+            "vec3 starCol(float h,float mag){\n" +
+            "  float t=clamp(h*0.75+mag*0.55-0.15,0.0,1.0);\n" +
+            "  if(t<0.25) return mix(vec3(1.00,0.62,0.36),vec3(1.00,0.78,0.58),t*4.0);\n" +
+            "  if(t<0.50) return mix(vec3(1.00,0.78,0.58),vec3(1.00,0.94,0.86),(t-0.25)*4.0);\n" +
+            "  if(t<0.75) return mix(vec3(1.00,0.94,0.86),vec3(0.92,0.95,1.00),(t-0.50)*4.0);\n" +
+            "  return mix(vec3(0.92,0.95,1.00),vec3(0.72,0.82,1.00),(t-0.75)*4.0);\n" +
+            "}\n" +
+            "vec3 sprinkleLayer(vec2 uv,float den,float ox,float oy,float dens){\n" +
+            "  float thresh=0.97-dens*0.97;\n" +
+            "  vec2 gp=uv*den+vec2(ox,oy);\n" +
+            "  vec2 cell=floor(gp),f=fract(gp);\n" +
+            "  float h=h1(cell+vec2(41.0,17.0));\n" +
+            "  if(h<thresh) return vec3(0.0);\n" +
+            "  vec2 df=f-h2(cell+23.7);\n" +
+            "  float d2=dot(df,df);\n" +
+            "  float core=max(0.0,1.0-d2*SP_CORE);\n" +
+            "  core*=core;\n" +
+            "  float b=core*SP_BRI;\n" +
+            "  vec3 sc=starCol(h1(cell+9.3),0.15);\n" +
+            "  return sc*b;\n" +
+            "}\n" +
+            "vec3 carpetLayer(vec2 uv,float ox,float oy,float dens){\n" +
+            "  float thresh=0.97-dens*0.97;\n" +
+            "  vec2 gp=uv*CP_DEN+vec2(ox,oy);\n" +
+            "  vec2 cell=floor(gp),f=fract(gp);\n" +
+            "  float h=h1(cell+vec2(53.0,11.0));\n" +
+            "  if(h<thresh) return vec3(0.0);\n" +
+            "  vec2 df=f-h2(cell+31.7);\n" +
+            "  float d2=dot(df,df);\n" +
+            "  float core=max(0.0,1.0-d2*CP_K);\n" +
+            "  core*=core;\n" +
+            "  return starCol(h1(cell+4.9),0.05)*core*CP_BRI*(0.4+0.6*h1(cell+2.3));\n" +
+            "}\n" +
+            "void main(){\n" +
+            "  vec2 sc=vUv-0.5; sc.y*=uRes.y/uRes.x;\n" +
+            "  float SZSP=SZ_SPEED*uZoom;\n" +
+            "  float ph=uTime*SZSP;\n" +
+            "  float t1=fract(ph+L0_PHASE);\n" +
+            "  float t2=fract(ph+L1_PHASE);\n" +
+            "  float f1=smoothstep(0.10,0.30,t1)*(1.0-smoothstep(0.70,0.90,t1));\n" +
+            "  float f2=smoothstep(0.10,0.30,t2)*(1.0-smoothstep(0.70,0.90,t2));\n" +
+            "  vec2 sr1=vec2(sc.x*0.951-sc.y*0.309, sc.x*0.309+sc.y*0.951);\n" +
+            "  vec2 sr2=vec2(sc.x*0.423-sc.y*0.906, sc.x*0.906+sc.y*0.423);\n" +
+            "  vec2 s1=sr1/exp(t1*SZ_MAX)+0.5+uSeed;\n" +
+            "  vec2 s2=sr2/exp(t2*SZ_MAX)+0.5+uSeed;\n" +
+            "  vec2 buv=vUv*2.0-1.0; buv.x*=uRes.x/uRes.y;\n" +
+            "  vec3 brd=normalize(vec3(buv,1.5));\n" +
+            "  float bandPos=brd.y*1.9+0.30*brd.x+0.22*sin(uTime*0.0093);\n" +
+            "  float band=exp(-bandPos*bandPos*3.0);\n" +
+            "  float bAlong=brd.x*1.66-brd.y*0.26+uSeed.x*5.0;\n" +
+            "  float brift=1.0; float bbandAmp=1.0; float bbulge=0.0;\n" +
+            "  if(band>0.02){\n" +
+            "    vec4 bl=texture(uBandLut,vec2((bAlong-uSeed.x*5.0)*0.33333+0.5,0.5));\n" +
+            "    float briftPos=bandPos*3.2+(bl.r-0.5)*1.6;\n" +
+            (BAND_BRAID
+            ? "    float brift2Pos=bandPos*3.2+(bl.g-0.5)*2.2+0.60;\n" +
+              "    float bdust=vn(vec2(bAlong*7.0,bandPos*9.0)+7.7);\n" +
+              "    brift=1.0-0.68*exp(-briftPos*briftPos*7.0)*(0.35+0.65*bl.g)\n" +
+              "         -0.40*exp(-brift2Pos*brift2Pos*6.0)*smoothstep(0.35,0.75,bdust);\n" +
+              "    brift=max(brift,0.10);\n"
+            : "    brift=1.0-0.60*exp(-briftPos*briftPos*5.0)*(0.35+0.65*bl.g);\n") +
+            "    bbulge=bl.a;\n" +
+            "    bbandAmp=0.60+0.80*bl.b*bl.b+1.0*bbulge;\n" +
+            "  }\n" +
+            "  vec2 scUv=sc+0.5;\n" +
+            "  vec2 sdUv=(f1>=f2)?s1:s2;\n" +
+            "  float sdOx=(f1>=f2)?L0_OX:L1_OX; float sdOy=(f1>=f2)?L0_OY:L1_OY;\n" +
+            "  vec2 sdGp=sdUv*STAR_DEN*uStarScale+vec2(sdOx,sdOy);\n" +
+            "  float sdField=vn(sdGp*SD_FREQ_LO+vec2(sdOx*0.1,sdOy*0.1))*SD_W_LO+vn(sdGp*SD_FREQ_HI+11.0)*SD_W_HI;\n" +
+            "  float sdD=smoothstep(SD_SS_LO,SD_SS_HI,sdField); sdD*=sdD;\n" +
+            "  float spDn=vn(scUv*3.2+uSeed*2.0+vec2(5.7,3.1))*0.55+vn(scUv*8.5+uSeed*4.0+17.3)*0.45;\n" +
+            "  float spDens=(SP_BASE+(1.0-SP_BASE)*smoothstep(SP_SS_LO,SP_SS_HI,spDn))*(1.0+sdD)*(1.0+band*3.0*bbandAmp*brift);\n" +
+            "  float spEpoch=floor(uTime/40.0);\n" +
+            "  vec2 spJit=vec2(h1(vec2(spEpoch,7.3)),h1(vec2(spEpoch,19.1)))*13.0;\n" +
+            "  vec3 spr=sprinkleLayer(scUv,SP_DEN,0.19+spJit.x,0.43+spJit.y,spDens);\n" +
+            // Extra finer band-only field: raises the in-band dot count past the
+            // SP_DEN grid's saturation. Dimmed by SP_BAND_BRI.
+            "  float bandSpr=band*bbandAmp*brift;\n" +
+            "  if(bandSpr>0.02){ spr+=sprinkleLayer(scUv,SP_BAND_DEN,0.53+spJit.x,0.11+spJit.y,bandSpr*2.5)*SP_BAND_BRI; }\n" +
+            "  float cpD=band*bbandAmp*brift*0.9;\n" +
+            "  if(cpD>0.02){ spr+=carpetLayer(scUv,0.31+spJit.x,0.57+spJit.y,cpD); }\n" +
+            "  vec3 skyRgb=spr*(1.0+band*0.8);\n" +
+            "  float bgrain=0.0;\n" +
+            "  if(band>0.02){\n" +
+            "    float gsum=vn(scUv*90.0+uSeed*7.0)*0.55+vn(scUv*260.0+uSeed*13.0+3.7)*0.45;\n" +
+            "    bgrain=0.45+0.9*gsum;\n" +
+            "  }\n" +
+            "  fragColor=vec4(skyRgb,bgrain);\n" +
             "}\n";
 
         // Pass 1 (gas, low-res FBO): program + locations
@@ -1203,6 +1303,18 @@ public class NebulaDream extends DreamService {
         private final String ablDefs;
         private final boolean ablating;
         private final float gasPin;
+        // Baked sky layer (always on): sprinkles + carpet + band grain, cached
+        // in a full-res FBO and re-baked once per ~40s epoch.
+        private int progSky, skAPos, skUTime, skURes, skUZoom, skUStarScale, skUSeed, skUBandLut;
+        private int cUSky, cUSkyPrev, cUSprBlend;
+        // Double-buffered so the epoch reposition can cross-dissolve (current +
+        // previous bake) instead of blinking to black.
+        private final int[] skyFbo = new int[2];
+        private final int[] skyTex = new int[2];
+        private int skyCur;            // index of the current (latest) bake
+        private float skyBakeTime;     // t of the last bake, for the dissolve ramp
+        private static final float SKY_DISSOLVE = 4.0f; // seconds to cross-dissolve
+        private int lastBakedEpoch = -999999;
 
         NebulaRenderer(float zoomMul, int frameCapFps, HdrSurface hdr, float gasScale,
                        HdrTuning hdrTuning, DisplayDiagnostics display, String ablate,
@@ -1233,12 +1345,14 @@ public class NebulaDream extends DreamService {
             if (ablating) sfRng.setSeed(20260714L);
         }
 
-        // Splice the ablation #defines in after the #version line (which must
-        // stay first) so the guards in the shader bodies see them.
-        private String ablate(String src) {
-            if (ablDefs.isEmpty()) return src;
+        // Splice #define blocks in after the #version line (which must stay
+        // first) so the guards in the shader bodies see them.
+        private String ablate(String src) { return spliceDefs(src, ""); }
+        private String spliceDefs(String src, String extra) {
+            String defs = ablDefs + extra;
+            if (defs.isEmpty()) return src;
             int nl = src.indexOf('\n');
-            return src.substring(0, nl + 1) + ablDefs + src.substring(nl + 1);
+            return src.substring(0, nl + 1) + defs + src.substring(nl + 1);
         }
 
         void setHdrTuning(HdrTuning t) { if (t != null) this.hdrTuning = t; }
@@ -1249,7 +1363,9 @@ public class NebulaDream extends DreamService {
             // On context recreation (e.g. resume), drop stale GL objects first.
             if (progGas!=0)  { GLES20.glDeleteProgram(progGas);  progGas=0; }
             if (progComp!=0) { GLES20.glDeleteProgram(progComp); progComp=0; }
+            if (progSky!=0)  { GLES20.glDeleteProgram(progSky);  progSky=0; }
             gasFbo=0; gasTex=0; // ids are stale on a new context; recreated in onSurfaceChanged
+            skyFbo[0]=0; skyFbo[1]=0; skyTex[0]=0; skyTex[1]=0; skyCur=0; lastBakedEpoch=-999999;
             lastDrawMs=0;
 
             progGas = buildProg(VERT_ES3, ablate(FRAG_GAS));
@@ -1280,6 +1396,18 @@ public class NebulaDream extends DreamService {
             cUGas    = GLES20.glGetUniformLocation(progComp,"uGas");
             cUStarScale = GLES20.glGetUniformLocation(progComp,"uStarScale");
             cUBandLut = GLES20.glGetUniformLocation(progComp,"uBandLut");
+            cUSky    = GLES20.glGetUniformLocation(progComp,"uSky");
+            cUSkyPrev= GLES20.glGetUniformLocation(progComp,"uSkyPrev");
+            cUSprBlend=GLES20.glGetUniformLocation(progComp,"uSprBlend");
+
+            progSky = buildProg(VERT_ES3, ablate(FRAG_SKY));
+            skAPos      = GLES20.glGetAttribLocation(progSky,"aPos");
+            skUTime     = GLES20.glGetUniformLocation(progSky,"uTime");
+            skURes      = GLES20.glGetUniformLocation(progSky,"uRes");
+            skUZoom     = GLES20.glGetUniformLocation(progSky,"uZoom");
+            skUStarScale= GLES20.glGetUniformLocation(progSky,"uStarScale");
+            skUSeed     = GLES20.glGetUniformLocation(progSky,"uSeed");
+            skUBandLut  = GLES20.glGetUniformLocation(progSky,"uBandLut");
 
             noiseTex = buildNoiseTexture(64); // re-upload each context (ids go stale); CPU gen is cached
             int[] lutId = new int[1];
@@ -1331,8 +1459,38 @@ public class NebulaDream extends DreamService {
 
             gasScaleActive = initialGasScale(w, h);
             recreateGasTarget();
+            recreateSkyTarget();
             String limit = (display == null) ? null : display.surfaceLimitMessage(w, h);
             if (limit != null) Log.w(TAG, limit);
+        }
+
+        // Full-resolution RGBA16F targets (double-buffered) for the baked sky
+        // layer. Sampled 1:1 in the comp pass (NEAREST, so the resolved sprinkle
+        // dots stay sharp). Two buffers so an epoch reposition cross-dissolves.
+        private void recreateSkyTarget() {
+            for (int b = 0; b < 2; b++) {
+                if (skyFbo[b]!=0) { GLES20.glDeleteFramebuffers(1,new int[]{skyFbo[b]},0); skyFbo[b]=0; }
+                if (skyTex[b]!=0) { GLES20.glDeleteTextures(1,new int[]{skyTex[b]},0); skyTex[b]=0; }
+                int[] id=new int[1];
+                GLES20.glGenTextures(1,id,0); skyTex[b]=id[0];
+                GLES20.glBindTexture(GLES20.GL_TEXTURE_2D,skyTex[b]);
+                GLES30.glTexImage2D(GLES20.GL_TEXTURE_2D,0,GLES30.GL_RGBA16F,screenW,screenH,0,
+                    GLES20.GL_RGBA,GLES30.GL_HALF_FLOAT,null);
+                GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D,GLES20.GL_TEXTURE_MIN_FILTER,GLES20.GL_NEAREST);
+                GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D,GLES20.GL_TEXTURE_MAG_FILTER,GLES20.GL_NEAREST);
+                GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D,GLES20.GL_TEXTURE_WRAP_S,GLES20.GL_CLAMP_TO_EDGE);
+                GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D,GLES20.GL_TEXTURE_WRAP_T,GLES20.GL_CLAMP_TO_EDGE);
+                GLES20.glGenFramebuffers(1,id,0); skyFbo[b]=id[0];
+                GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER,skyFbo[b]);
+                GLES20.glFramebufferTexture2D(GLES20.GL_FRAMEBUFFER,GLES20.GL_COLOR_ATTACHMENT0,
+                    GLES20.GL_TEXTURE_2D,skyTex[b],0);
+                if (GLES20.glCheckFramebufferStatus(GLES20.GL_FRAMEBUFFER)!=GLES20.GL_FRAMEBUFFER_COMPLETE)
+                    Log.w(TAG,"Sky FBO "+b+" incomplete.");
+            }
+            GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER,0);
+            skyCur=0;
+            lastBakedEpoch=-999999; // force a re-bake into the new target
+            Log.i(TAG,"Sky FBO "+screenW+"x"+screenH+" (x2)");
         }
 
         @Override
@@ -1395,6 +1553,37 @@ public class NebulaDream extends DreamService {
             float t=(SystemClock.elapsedRealtime()-startMs)/1000f;
             updateBandLut(t); // binds the LUT on unit 1 for both passes
 
+            // ── SKY BAKE (prototype): re-render the cached sprinkle/carpet/grain
+            // layer only when the ~40s sprinkle epoch rolls over. Everything it
+            // bakes is screen-space and static within an epoch, so this runs a
+            // handful of times per session; the comp pass just samples it. ─────
+            if (progSky != 0 && skyFbo[0] != 0) {
+                int epoch = (int)Math.floor(t / 40.0);
+                if (epoch != lastBakedEpoch) {
+                    boolean first = (lastBakedEpoch == -999999);
+                    int dst = first ? skyCur : (1 - skyCur); // bake into the OTHER buffer
+                    GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, skyFbo[dst]);
+                    GLES20.glViewport(0, 0, screenW, screenH);
+                    GLES20.glUseProgram(progSky);
+                    GLES20.glUniform1f(skUTime, t);
+                    GLES20.glUniform2f(skURes, (float)screenW, (float)screenH);
+                    GLES20.glUniform1f(skUZoom, zoomMul);
+                    GLES20.glUniform1f(skUStarScale, starScale);
+                    GLES20.glUniform2f(skUSeed, seedX, seedY);
+                    GLES20.glUniform1i(skUBandLut, 1);
+                    quadBuf.position(0);
+                    GLES20.glVertexAttribPointer(skAPos,2,GLES20.GL_FLOAT,false,8,quadBuf);
+                    GLES20.glEnableVertexAttribArray(skAPos);
+                    GLES20.glDrawArrays(GLES20.GL_TRIANGLES,0,6);
+                    skyCur = dst;
+                    // First bake: no valid previous buffer, so start past the
+                    // dissolve (blend=1) to show the fresh bake immediately.
+                    skyBakeTime = first ? (t - SKY_DISSOLVE) : t;
+                    lastBakedEpoch = epoch;
+                    Log.i(TAG, "Sky layer baked (epoch " + epoch + ", buf " + dst + ")");
+                }
+            }
+
             // ── PASS 1: raymarch the gas into the low-res FBO ────────────────
             if (sampleWork) GLES30.glBeginQuery(GL_TIME_ELAPSED_EXT, timerQuery[0]);
             GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER,gasFbo);
@@ -1442,6 +1631,16 @@ public class NebulaDream extends DreamService {
             GLES20.glBindTexture(GLES20.GL_TEXTURE_2D,gasTex);
             GLES20.glUniform1i(cUGas,0);
             GLES20.glUniform1i(cUBandLut,1);
+            if (cUSky >= 0) {
+                GLES20.glActiveTexture(GLES20.GL_TEXTURE2);
+                GLES20.glBindTexture(GLES20.GL_TEXTURE_2D,skyTex[skyCur]);
+                GLES20.glUniform1i(cUSky,2);
+                GLES20.glActiveTexture(GLES20.GL_TEXTURE3);
+                GLES20.glBindTexture(GLES20.GL_TEXTURE_2D,skyTex[1-skyCur]);
+                GLES20.glUniform1i(cUSkyPrev,3);
+                float blend = clamp((t - skyBakeTime) / SKY_DISSOLVE, 0f, 1f);
+                GLES20.glUniform1f(cUSprBlend, blend);
+            }
             quadBuf.position(0);
             GLES20.glVertexAttribPointer(cAPos,2,GLES20.GL_FLOAT,false,8,quadBuf);
             GLES20.glEnableVertexAttribArray(cAPos);
