@@ -187,6 +187,15 @@ public class NebulaDream extends DreamService {
         private static final float SP_BASE     = 0.18f; // raised floor: endless faint stars beneath the bright ones
         private static final float SP_SS_LO    = 0.25f;
         private static final float SP_SS_HI    = 0.65f;
+        // Thins the sprinkle field OUTSIDE the milky-way band. The mask
+        // saturates (smoothstep on band) so the band proper — not just its
+        // centreline — keeps its full count, and only the genuinely off-band sky
+        // is thinned; the smoothstep edge keeps the transition seamless.
+        // sprinkleLayer's dens only sets which cells light up
+        // (thresh=0.97-dens*0.97), so this removes dots rather than dimming
+        // them. Lit fraction is 0.03+0.97*dens, so the 0.03 floor means the
+        // multiplier is NOT the count ratio: 0.78 yields ~20% fewer dots.
+        private static final float SP_NONBAND_MUL = 0.78f;
         // Extra band-only sprinkle field on a FINER grid than SP_DEN. The main
         // SP_DEN grid saturates in the band core (every cell already lit), so
         // raising its density there adds nothing — a second, finer field is the
@@ -207,6 +216,15 @@ public class NebulaDream extends DreamService {
         // during the 2026-07-14 brightness triage, re-enabled once the grain
         // range compression fixed the all-or-nothing behaviour.
         private static final boolean BAND_BRAID = true;
+        // Master milky-way-band brightness. The band's light comes from TWO
+        // additive gains in two passes — the gas-pass broad halo (0.058) and the
+        // comp-pass diffuse grain (0.084) — and their ratio sets the band's
+        // character (soft glow vs native-res texture). Both ride this scale, so
+        // tuning it changes brightness WITHOUT disturbing that balance. Does not
+        // touch the band's resolved dots (band-only sprinkle field + faint-star
+        // carpet), which keep their count regardless.
+        private static final float BAND_BRI = 0.90f;
+
         // Band LUT: texel count and the bAlong half-range it covers around
         // the seed centre (on-screen range is ~±1.2; fetches clamp at edges).
         private static final int   BAND_LUT_N    = 256;
@@ -380,6 +398,7 @@ public class NebulaDream extends DreamService {
             "#define L1_OX "     + L1_OX     + "\n" +
             "#define L1_OY "     + L1_OY     + "\n" +
             "#define HAZE_MUL "  + HAZE_MUL  + "\n" +
+            "#define BAND_BRI "  + BAND_BRI  + "\n" +
             "#define SD_FREQ_LO " + SD_FREQ_LO + "\n" +
             "#define SD_FREQ_HI " + SD_FREQ_HI + "\n" +
             "#define SD_W_LO "    + SD_W_LO    + "\n" +
@@ -420,6 +439,8 @@ public class NebulaDream extends DreamService {
             "#define SP_BASE "     + SP_BASE     + "\n" +
             "#define SP_SS_LO "    + SP_SS_LO    + "\n" +
             "#define SP_SS_HI "    + SP_SS_HI    + "\n" +
+            "#define SP_NONBAND_MUL " + SP_NONBAND_MUL + "\n" +
+            "#define BAND_BRI " + BAND_BRI + "\n" +
             "#define SP_BAND_DEN " + SP_BAND_DEN + "\n" +
             "#define SP_BAND_BRI " + SP_BAND_BRI + "\n" +
             "#define CP_DEN "      + CP_DEN      + "\n" +
@@ -768,7 +789,10 @@ public class NebulaDream extends DreamService {
             "  bx/=1.0+max(bx-0.8,0.0)*0.5;\n" +
             // Broad band halo lowered 0.12 -> 0.0725 to match the comp grain drop
             // (the resolved sprinkle field now carries the band's brightness).
-            "  col+=T*mix(vec3(0.20,0.185,0.205),vec3(0.245,0.205,0.165),bulge)*bx*0.0725;\n" +
+            // 0.0725 -> 0.058: -20% band brightness, applied to BOTH this halo and
+            // the comp-pass grain gain so their balance is preserved. Further
+            // trims ride BAND_BRI (the master scale) rather than this number.
+            "  col+=T*mix(vec3(0.20,0.185,0.205),vec3(0.245,0.205,0.165),bulge)*bx*0.058*BAND_BRI;\n" +
             "#endif\n" +
             "  col+=T*hz;\n" +
             "  fragColor=vec4(col,T);\n" +
@@ -907,7 +931,7 @@ public class NebulaDream extends DreamService {
             "  vec2 gp=uv*den+vec2(ox,oy);\n" +
             "  vec2 cell=floor(gp),f=fract(gp);\n" +
             "  float h=h1(cell+vec2(7.3,29.1));\n" +
-            "  if(h<0.982) return vec3(0.0);\n" +
+            "  if(h<GAL_SMALL_THRESH) return vec3(0.0);\n" +
             "  vec2 df=f-(vec2(0.35)+0.30*h2(cell+11.3));\n" + // keep the smudge clear of cell edges
             "  float gang=6.2831*h1(cell+3.1);\n" +
             "  vec2 grot=vec2(cos(gang)*df.x+sin(gang)*df.y,-sin(gang)*df.x+cos(gang)*df.y);\n" +
@@ -1101,7 +1125,9 @@ public class NebulaDream extends DreamService {
             // Diffuse band grain lowered 0.20 -> 0.105: the denser resolved
             // sprinkle field now carries the band's presence, so the smooth glow
             // no longer needs to. (Walked down to 0.08, then back up halfway.)
-            "    col+=T*bandCol*cx*0.105;\n" +
+            // 0.105 -> 0.084: -20% band brightness, matching the gas-pass halo cut.
+            // Further trims ride BAND_BRI (the master scale), not this number.
+            "    col+=T*bandCol*cx*0.084*BAND_BRI;\n" +
             "  }\n" +
             // Sprinkles + carpet: baked (frozen per 40s epoch, incl. the finer
             // band-only field) into uSky.rgb. At each epoch the pattern jumps to
@@ -1313,7 +1339,7 @@ public class NebulaDream extends DreamService {
             "  float sdField=vn(sdGp*SD_FREQ_LO+vec2(sdOx*0.1,sdOy*0.1))*SD_W_LO+vn(sdGp*SD_FREQ_HI+11.0)*SD_W_HI;\n" +
             "  float sdD=smoothstep(SD_SS_LO,SD_SS_HI,sdField); sdD*=sdD;\n" +
             "  float spDn=vn(scUv*3.2+uSeed*2.0+vec2(5.7,3.1))*0.55+vn(scUv*8.5+uSeed*4.0+17.3)*0.45;\n" +
-            "  float spDens=(SP_BASE+(1.0-SP_BASE)*smoothstep(SP_SS_LO,SP_SS_HI,spDn))*(1.0+sdD)*(1.0+band*3.0*bbandAmp*brift);\n" +
+            "  float spDens=(SP_BASE+(1.0-SP_BASE)*smoothstep(SP_SS_LO,SP_SS_HI,spDn))*(1.0+sdD)*(1.0+band*3.0*bbandAmp*brift)*mix(SP_NONBAND_MUL,1.0,smoothstep(0.04,0.35,band));\n" +
             "  float spEpoch=floor(uTime/40.0);\n" +
             "  vec2 spJit=vec2(h1(vec2(spEpoch,7.3)),h1(vec2(spEpoch,19.1)))*13.0;\n" +
             "  vec3 spr=sprinkleLayer(scUv,SP_DEN,0.19+spJit.x,0.43+spJit.y,spDens);\n" +
