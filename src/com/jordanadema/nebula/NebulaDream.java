@@ -264,12 +264,27 @@ public class NebulaDream extends DreamService {
         // strength. Peaks are never boosted — average field brightness drops too.
         private static final float GAS_CONTRAST_FLOOR = 0.42f;
         private static final float GAS_CONTRAST_KNEE  = 0.85f;
+        // Star-forming core carve-out (light approximation): cores are the
+        // brightest gas, so a mask keyed on the PURE gas peak (gas.rgb, before
+        // stars blend in) isolates them without a separate render target. Given
+        // the wash is suppressed and warm gas reduced, gas peak > ~1.0 is
+        // essentially only cores. Masked pixels (a) keep their pink instead of
+        // desaturating to white with the rest of the bright gas, and (b) ride a
+        // higher HDR ceiling than the wash, so a firing core blazes as a luminous
+        // pink heart. Gating (rarity) is unchanged — this only changes how a core
+        // that does fire is tonemapped. LO/HI map gas peak to mask 0..1.
+        private static final float CORE_HDR_LO    = 1.30f; // gas peak where core carve-out begins (measured: bright wash tops out ~1.24, so this sits just above it)
+        private static final float CORE_HDR_HI    = 2.50f; // gas peak for full carve-out (a firing, source-boosted core)
+        // NEUTRALISED (2026-07-16). The carve-out keyed on gas brightness, but
+        // measured gas peaks show the bright WASH reaches 1.24-1.5 — overlapping
+        // CORE_HDR_LO — so it fired on ordinary bright gas and gave it back its
         // saturation and a raised ceiling: undifferentiated technicolor blobs,
         // the one thing the nebula must never do. Brightness cannot separate
         // cores from bright wash; only a true core signal (a second render
         // target from the gas pass) can. Until then cores stay folded into the
         // gas. Set CEIL>GAS_HDR_CEIL and DESAT_KEEP>0 to re-enable.
         private static final float CORE_HDR_CEIL  = GAS_HDR_CEIL;
+        private static final float CORE_DESAT_KEEP = 0.0f;
 
         // Star rendering
         private static final float SPIKE_THRESH = 0.65f;
@@ -359,7 +374,19 @@ public class NebulaDream extends DreamService {
             "#define GAS_HDR_CEIL " + GAS_HDR_CEIL + "\n" +
             "#define GAS_HDR_KNEE " + GAS_HDR_KNEE + "\n" +
             "#define GAS_HDR_GAIN " + GAS_HDR_GAIN + "\n" +
-            "#define SPIKE_THRESH " + SPIKE_THRESH + "\n";
+            "#define CORE_HDR_LO "    + CORE_HDR_LO    + "\n" +
+            "#define CORE_HDR_HI "    + CORE_HDR_HI    + "\n" +
+            "#define CORE_HDR_CEIL "  + CORE_HDR_CEIL  + "\n" +
+            "#define CORE_DESAT_KEEP " + CORE_DESAT_KEEP + "\n" +
+            "#define STAR_HDR_GAIN " + STAR_HDR_GAIN + "\n" +
+            "#define FLARE_STEADY " + FLARE_STEADY + "\n" +
+            "#define SPIKE_THRESH " + SPIKE_THRESH + "\n" +
+            "#define STAR_MAG_FLOOR " + STAR_MAG_FLOOR + "\n" +
+            "#define STAR_MAG_POW " + STAR_MAG_POW + "\n" +
+            "#define FAR_STAR_SPEED " + FAR_STAR_SPEED + "\n" +
+            "#define FAR_STAR_DEN "   + FAR_STAR_DEN   + "\n" +
+            "#define FAR_STAR_BRI "   + FAR_STAR_BRI   + "\n" +
+            "#define GAL_SMALL_THRESH " + GAL_SMALL_THRESH + "\n";
 
         private static final String VERT_ES3 =
             "#version 300 es\n" +
@@ -1062,7 +1089,12 @@ public class NebulaDream extends DreamService {
             // white-hot, not as the same violet at ten times the intensity. Starts
             // earlier and goes further than the old 2.4/5.0/0.40 — that left the
             // top end fully saturated, which is what made blown masses scream.
-            "  col=mix(col,vec3(luma),smoothstep(1.6,4.4,pk)*0.72);\n" +
+            // Core mask from the PURE gas peak (gas.rgb, no stars): isolates the
+            // brightest gas = star-forming cores. Cores keep CORE_DESAT_KEEP of
+            // their pink while the rest of the bright gas still washes to white.
+            "  float gasPk=max(max(gas.r,gas.g),gas.b);\n" +
+            "  float coreMask=smoothstep(CORE_HDR_LO,CORE_HDR_HI,gasPk);\n" +
+            "  col=mix(col,vec3(luma),smoothstep(1.6,4.4,pk)*0.72*(1.0-coreMask*CORE_DESAT_KEEP));\n" +
             "  vec3 base=col/(col+vec3(0.85));\n" +
             "  base=pow(max(base,vec3(0.0)),vec3(0.92))*1.12;\n" +
             "  vec3 starBase=starSig/(starSig+vec3(0.85));\n" +
