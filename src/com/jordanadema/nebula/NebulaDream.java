@@ -212,6 +212,24 @@ public class NebulaDream extends DreamService {
         private static final int   BAND_LUT_N    = 256;
         private static final float BAND_LUT_HALF = 1.5f;
 
+        // Erosion bite. The erosion USED to be applied as rm(d, ero*k, 1.0) — a
+        // floor-lift-and-renormalise — whose top always maps back to 1.0, so the
+        // erosion noise had mathematically ZERO effect as d->1:
+        //   d=0.3 -> 58% texture range, d=0.7 -> 11%, d=0.85 -> 4%, d=1.0 -> 0%.
+        // The densest gas was therefore smooth BY CONSTRUCTION, and dense =
+        // bright, which is why the brightest patches always blobbed out. No
+        // tonemap/HDR tuning could fix it: the texture was already gone inside
+        // the raymarch. Applied multiplicatively instead, the erosion bites at
+        // every density — at d=1 it still carves the full 1..(1-BITE) range.
+        // Calibrated to match the old bite at mid density (d=0.5: old 0.375 =
+        // x0.75 -> BITE 0.25; ero2 old 0.359 = x0.718 -> BITE2 0.28), so the
+        // mid-range look is preserved while dense interiors gain their texture.
+        // Dense masses do get thinner (they are now actually eroded) — that is
+        // the point, but it is why these are tunable.
+        private static final float ERO_BITE  = 0.28f;
+        private static final float ERO2_BITE = 0.30f;
+        private static final float ERO_HI    = 0.60f;
+
         // Galaxy haze
         private static final float HAZE_MUL    = 0.22f;
 
@@ -230,7 +248,7 @@ public class NebulaDream extends DreamService {
         // the mass covered. Gas now climbs progressively and tops out partway up
         // the panel's range, leaving the top to stars, novas and the cores: a few
         // highlights blaze, large areas do not.
-        private static final float GAS_HDR_CEIL = 0.2272f; // share of panel headroom the gas may reach (0.37 -> 0.3145 -> 0.2673 -> 0.2272, each -15%)
+        private static final float GAS_HDR_CEIL = 0.3600f;  // 0.37 ->0.3145 ->0.2673 ->0.2272 (each -15%), +25% ->0.2840, now +27% ->0.36.  // ERO_HI carves interior form OUT of density, so cranking it thins the gas  // (mean x0.70 at 0.60). Brightness pays that back so form and presence rise together.
         private static final float GAS_HDR_KNEE = 1.25f; // gas starts boosting later than stars
         private static final float GAS_HDR_GAIN = 0.27f; // and climbs far more slowly once it does
 
@@ -282,7 +300,12 @@ public class NebulaDream extends DreamService {
             "#define SD_SS_HI "   + SD_SS_HI   + "\n" +
             "#define CORE_LO "    + CORE_LO    + "\n" +
             "#define CORE_HI "    + CORE_HI    + "\n" +
-            "#define CORE_GAIN "  + CORE_GAIN  + "\n";
+            "#define ERO_BITE "  + ERO_BITE  + "\n" +
+            "#define ERO2_BITE " + ERO2_BITE + "\n" +
+            "#define ERO_HI "    + ERO_HI    + "\n" +
+            "#define CORE_GAIN "  + CORE_GAIN  + "\n" +
+            "#define GAS_CONTRAST_FLOOR " + GAS_CONTRAST_FLOOR + "\n" +
+            "#define GAS_CONTRAST_KNEE "  + GAS_CONTRAST_KNEE  + "\n";
 
         private static final String COMP_DEFS =
             "#define SD_FREQ_LO "  + SD_FREQ_LO  + "\n" +
@@ -381,9 +404,15 @@ public class NebulaDream extends DreamService {
             "  float cov=smoothstep(0.26,0.68,texture(uNoise,p*0.022+0.31).r);\n" +
             "  float d=rm(base,1.0-cov,1.0)*cov;\n" +
             "  float ero=texture(uNoise,p*0.22).g;\n" +              // broad Worley erosion
-            "  d=rm(d,ero*0.20,1.0);\n" +
+            "  d=rm(d,ero*ERO_BITE,1.0);\n" +
             "  float ero2=texture(uNoise,p*0.58).g;\n" +             // fine erosion for detailed edges
-            "  d=rm(d,ero2*0.22,1.0);\n" +
+            "  d=rm(d,ero2*ERO2_BITE,1.0);\n" +
+            // rm() renormalises, so its bite -> 0 as d -> 1 (dense gas smooth by
+            // construction). This multiplicative term does NOT renormalise, so it
+            // still carves at d=1 — it only ADDS to the rm contrast above, rather
+            // than replacing it (replacing it was weaker everywhere and made the
+            // whole nebula smoother).
+            "  d*=(1.0-ERO_HI*(0.68*ero+0.32*ero2));\n" +
             "  return pow(d,1.8);\n" +                              // fuller interiors for larger readable masses
             "}\n" +
             // Mid-distance density (3 fetches): keeps the coarse Worley erosion
@@ -394,8 +423,10 @@ public class NebulaDream extends DreamService {
             "  float cov=smoothstep(0.26,0.68,texture(uNoise,p*0.022+0.31).r);\n" +
             "  float d=rm(base,1.0-cov,1.0)*cov;\n" +
             "  float ero=texture(uNoise,p*0.22).g;\n" +
-            "  d=rm(d,ero*0.20,1.0);\n" +
-            "  d=rm(d,0.20,1.0);\n" +                                // approximate the fine erosion's average
+            "  d=rm(d,ero*ERO_BITE,1.0);\n" +
+            "  d=rm(d,0.20,1.0);\n" +
+            "  d*=(1.0-ERO_HI*ero);\n" +
+                                // approximate the fine erosion's average
             "  return pow(d,1.8)*0.95;\n" +
             "}\n" +
             // Cheap far-field density (2 low-freq fetches, no erosion detail): used
