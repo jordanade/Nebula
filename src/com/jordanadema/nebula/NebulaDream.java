@@ -285,9 +285,42 @@ public class NebulaDream extends DreamService {
         // gas. Set CEIL>GAS_HDR_CEIL and DESAT_KEEP>0 to re-enable.
         private static final float CORE_HDR_CEIL  = GAS_HDR_CEIL;
         private static final float CORE_DESAT_KEEP = 0.0f;
+        // Star HDR ramp scale. The star boost curve saturates almost as soon as a
+        // star clears the knee: measured on the Shield (starGain 13.67, starMax
+        // 8.44), stars at linear 3/4/6/8 all landed at boost 7.20/7.40/7.44/7.44
+        // — a 2.7x spread of real brightness pinned into a 3% spread of output,
+        // so most stars read as near-full. The intrinsic magnitudes are already
+        // faint-skewed (mag=0.16+0.84*hm^3); it is this ramp that flattens them.
+        // Scaling the gain down stretches the curve so magnitude differences
+        // survive to the panel. The very brightest still reach peak (the curve
+        // still saturates up there) — only the mid range spreads back out.
+        // Tuned by curve arithmetic against the device's logged HDR tuning
+        // (starGain 13.67, starMax 8.44, knee 2.03) — screencap histograms could
+        // not adjudicate this (each capture run lands on a different camera
+        // position, and the dot detector is dominated by sprinkles, not stars).
+        // Boost at star linear 2/3/4/8: gain 1.0 -> 5.96/7.20/7.40/7.44 (the mid
+        // range is pinned at the ceiling); 0.70 -> 5.04/6.78/7.25/7.44 (barely a
+        // change); 0.45 -> 3.85/5.87/6.75/7.41; 0.35 -> 3.21/5.22/6.27/7.35.
+        //
+        // Set HIGH enough that the brightest stars hit the panel's max. Measured
+        // on-device (debug build rendering starLum, which is pre-tonemap and so
+        // invisible to a normal screencap): the brightest ordinary star peaks at
+        // starLum ~4.2. Its output vs the 8.44 cap: 0.90 -> 100%, 0.80 -> 99.7%,
+        // 0.60 -> 98.0%, 0.35 -> 89.9%. 0.90 puts it AT the cap.
+        // This knob is NOT the way to get brightness variety — lowering it only
+        // buys spread by dragging the top down. The population shape does that
+        // job instead: see STAR_MAG_POW (fewer bright) and STAR_MAG_FLOOR
+        // (deeper faint end).
+        private static final float STAR_HDR_GAIN = 0.90f;
 
         // Star rendering
         private static final float SPIKE_THRESH = 0.65f;
+        // (0.65): POW 3 -> ~15%, POW 5 -> ~9%. This — not STAR_HDR_GAIN — is the
+        // lever for "fewer bright stars, more dim ones".
+        // The formula lives in three places (starLayer, the flare overlay, and
+        // cpuStarMag for the CPU picker); they MUST agree, hence shared constants.
+        private static final float STAR_MAG_FLOOR = 0.08f;
+        private static final float STAR_MAG_POW   = 5.0f;
 
         // Flare scheduling: rare events, not texture. Gaps trimmed from 40-180s
         // to 24-104s (2026-07-14) alongside the on-screen placement fix — most
@@ -813,11 +846,8 @@ public class NebulaDream extends DreamService {
             "  if(h<thresh) return vec3(0.0);\n" +
             "  vec2 df=f-h2(cell+3.7);\n" +
             "  float d2=dot(df,df);\n" +
-            "  float hm=h1(cell+7.7); float mag=0.16+0.84*hm*hm*hm;\n" + // cubic (was quartic) + lower floor: wider brightness spread, still faint-skewed
-            "  vec2 fc=cell-vec2(uStarFlare.x,uStarFlare.y); float isFlare=step(abs(lid-uStarFlare.w),0.5)*(1.0-step(0.25,dot(fc,fc)));\n" +
-            "  float fl=isFlare*uStarFlare.z;\n" +
-            "  float fl2=fl*fl;\n" +
-            "  float bri=mag+fl2*8.0;\n" +
+            "  float hm=h1(cell+7.7); float mag=STAR_MAG_FLOOR+(1.0-STAR_MAG_FLOOR)*pow(hm,STAR_MAG_POW);\n" + // faint-skewed power law; see STAR_MAG_FLOOR / STAR_MAG_POW.
+            "  float bri=mag;\n" +
             "  float tw=starTwinkle(cell,lid,mag);\n" +
             "  float twDelta=tw-1.0;\n" +
             "  float soft=1.0+fl2*18.0;\n" +
@@ -1071,6 +1101,7 @@ public class NebulaDream extends DreamService {
             "    vec3 nCol=mix(vec3(1.00,0.97,0.92),vec3(1.00,0.70,0.42),uNovaP*uNovaP);\n" +
             "    bg+=nCol*(nCore+nGlow+nSp);\n" +
             "  }\n" +
+            "    float hmF=h1(cellF+7.7); float fmag=STAR_MAG_FLOOR+(1.0-STAR_MAG_FLOOR)*pow(hmF,STAR_MAG_POW);\n" +
             "  vec3 starSig=T*bg;\n" +
             // (deep-space floor moved to the gas pass with the haze)
             "  col+=starSig;\n" +
@@ -1124,7 +1155,7 @@ public class NebulaDream extends DreamService {
             "    vec3 hdr=lin*(1.0+boost);\n" +
             "    float starHi=max(starLum-uHdrKnee*0.55,0.0);\n" +
             "    float starBoostMax=max(uHdrStarMax-1.0,1.0);\n" +
-            "    float starBoost=starBoostMax*(1.0-exp(-(uHdrStarGain*starHi)/starBoostMax));\n" +
+            "    float starBoost=starBoostMax*(1.0-exp(-(uHdrStarGain*STAR_HDR_GAIN*starHi)/starBoostMax));\n" +
             "    float starMask=smoothstep(0.10,0.90,starLum);\n" +
             "    hdr+=starLin*starMask*starBoost;\n" +
             "    float hpk=max(max(hdr.r,hdr.g),hdr.b);\n" +
@@ -1333,6 +1364,14 @@ public class NebulaDream extends DreamService {
                 GLES20.GL_RGBA, GLES20.GL_UNSIGNED_BYTE, bandLutBuf);
         }
 
+        // Star magnitude for a cell — mirrors starLayer's
+        // hm=h1(cell+7.7); mag=STAR_MAG_FLOOR+(1-STAR_MAG_FLOOR)*hm^3, so the CPU
+        // picker and the shader agree on which stars are bright. Must stay in
+        // lock-step with the two shader copies of this formula.
+        private static float cpuStarMag(float cellX, float cellY) {
+            float hm = cpuH1(cellX + 7.7f, cellY + 7.7f);
+            return STAR_MAG_FLOOR + (1f - STAR_MAG_FLOOR) * (float)Math.pow(hm, STAR_MAG_POW);
+        }
         private boolean cpuHasStar(float cellX, float cellY, float ox, float oy) {
             float h = cpuH1(cellX, cellY);
             if (h < STAR_FLOOR) return false;
@@ -1778,7 +1817,8 @@ public class NebulaDream extends DreamService {
                     float cx = (float)Math.floor(cxCenter - span + sfRng.nextFloat() * 2f * span);
                     float cy = (float)Math.floor(cyCenter - span + sfRng.nextFloat() * 2f * span);
                     if (!cpuHasStar(cx, cy, lox, loy)) continue;
-                    sfCellX = cx; sfCellY = cy; // fallback: last star found
+                    if (cpuStarMag(cx, cy) < FLARE_MIN_MAG) continue; // brighter-than-average only
+                    sfCellX = cx; sfCellY = cy; // fallback: last bright star found
                     if (cpuOnScreen(cx, cy, lox, loy, ca, sa, zoom)) break;
                 }
                 sfNext = t + sfDur + FLARE_GAP_MIN + sfRng.nextFloat() * FLARE_GAP_RNG;
@@ -1823,6 +1863,7 @@ public class NebulaDream extends DreamService {
                     float cx = (float)Math.floor(cxCenter - span + sfRng.nextFloat() * 2f * span);
                     float cy = (float)Math.floor(cyCenter - span + sfRng.nextFloat() * 2f * span);
                     if (!cpuHasStar(cx, cy, lox, loy)) continue;
+                    if (cpuStarMag(cx, cy) < NOVA_MIN_MAG) continue; // brightest stars only
                     nvCellX = cx; nvCellY = cy;
                     if (cpuOnScreen(cx, cy, lox, loy, ca, sa, zoom)) break;
                 }
