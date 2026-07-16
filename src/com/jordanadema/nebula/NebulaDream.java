@@ -333,6 +333,14 @@ public class NebulaDream extends DreamService {
 
         // Star rendering
         private static final float SPIKE_THRESH = 0.65f;
+        // Star magnitude: mag = FLOOR + (1-FLOOR)*hm^POW, hm uniform in [0,1].
+        // FLOOR sets the faint end (and so the intrinsic RANGE, floor -> 1.0):
+        // 0.16 gave only 6.25x, 0.08 doubles it to 12.5x.
+        // POW sets the SHAPE — how many stars are bright vs dim. hm=1 always maps
+        // to mag 1.0, so raising POW takes brightness AWAY from the population
+        // without touching the brightest star: it pushes ever more of the field
+        // toward the faint end at every level. E[hm^POW]=1/(POW+1), so the mean
+        // magnitude falls as POW rises. Fraction of stars above SPIKE_THRESH
         // (0.65): POW 3 -> ~15%, POW 5 -> ~9%. This — not STAR_HDR_GAIN — is the
         // lever for "fewer bright stars, more dim ones".
         // The formula lives in three places (starLayer, the flare overlay, and
@@ -367,8 +375,42 @@ public class NebulaDream extends DreamService {
         // texture.
         private static final float FLARE_DUR_MIN = 4.0f;
         private static final float FLARE_DUR_RNG = 4.0f;
-        private static final float FLARE_GAP_MIN = 24.0f;
-        private static final float FLARE_GAP_RNG = 80.0f;
+        private static final float FLARE_GAP_MIN = 10.0f;
+        private static final float FLARE_GAP_RNG = 30.0f;
+        // Flares only fire on brighter-than-average stars. Star magnitude is
+        // mag=0.16+0.84*hm^3 with hm uniform, so E[hm^3]=1/4 and the MEAN mag is
+        // 0.37. 0.45 sits comfortably above it, selecting the top ~30% (hm>0.70)
+        // — a flare lands on a star that was already prominent, instead of a
+        // faint one suddenly out-blazing its neighbours. The picker checks this
+        // CPU-side against the same hash the shader uses.
+        private static final float FLARE_MIN_MAG = 0.45f;
+        // Novas are the rarest event, so they ride the genuinely brightest stars
+        // — a stricter bar than the flares'. 0.70 selects the top ~14% (hm>0.86)
+        // against the 0.37 mean. Kept below the point where the picker would
+        // struggle to find a qualifying on-screen star within its 200 attempts.
+        private static final float NOVA_MIN_MAG = 0.70f;
+        // Fraction of the flare's duration spent rising. The old envelope was
+        // sin^2 — symmetric, so it read as a soft swell rather than an event.
+        // A real flare brightens abruptly and decays slowly.
+        private static final float FLARE_RISE = 0.12f;
+        // Decay exponent for the flare tail (lower = lingers longer). The shader
+        // AMPLIFIES this: core/glow scale as fv^2 and spikes as fv^4, so the
+        // envelope's exponent is effectively doubled/quadrupled on screen. The
+        // old quadratic tail meant the core fell as k^4 and the spikes as k^8 —
+        // down to 6% by the halfway point, which snapped out far too fast. 1.0
+        // (linear) put the core on k^2 and the spikes on k^4; 0.75 slows it
+        // further still (core k^1.5, spikes k^3).
+        private static final float FLARE_DECAY_POW = 0.75f;
+        // How fast a flaring star stops twinkling. The base star keeps rendering
+        // under the flare overlay, and its twinkle drives the core, the halo, the
+        // spike BRIGHTNESS and the spike LENGTH (spTight) — so an igniting star's
+        // spikes visibly writhe. Damping tw->1.0 as the flare rises stills all of
+        // them at once. Raised 2.5 -> 8.0: at 2.5 the damping tracked the
+        // envelope, so twinkle crept back in DURING the fade (steady only while
+        // env*mag > ~0.4). At 8.0 the star stays fully steady until env*mag falls
+        // below ~0.125 — i.e. past ~80% of the event, by which point the flare
+        // core is under 2% of peak and effectively gone.
+        private static final float FLARE_STEADY = 8.0f;
 
         // Nova scheduling: the rarest event. One star swells to a brilliant HDR
         // point (~2s rise), holds, and fades over ~25s with a white->amber
@@ -894,25 +936,36 @@ public class NebulaDream extends DreamService {
             "  float hm=h1(cell+7.7); float mag=STAR_MAG_FLOOR+(1.0-STAR_MAG_FLOOR)*pow(hm,STAR_MAG_POW);\n" + // faint-skewed power law; see STAR_MAG_FLOOR / STAR_MAG_POW.
             "  float bri=mag;\n" +
             "  float tw=starTwinkle(cell,lid,mag);\n" +
+            // A flaring star steadies as it ignites. The base star keeps drawing
+            // under the flare overlay, and tw drives the core, the halo, the
+            // spike brightness AND the spike length (spTight below) — so without
+            // this its spikes writhe at 0.6-1.4Hz through the whole event.
+            // Damping tw->1.0 (twDelta->0) stills all of them together. Matches
+            // only the flaring cell on the flaring layer; far-star layers (lid
+            // 3/4) never match since uStarFlare.w is 0 or 1.
+            "  if(uStarFlare.z>0.0001&&abs(lid-uStarFlare.w)<0.5\n" +
+            "     &&all(lessThan(abs(cell-uStarFlare.xy),vec2(0.5)))){\n" +
+            "    tw=mix(tw,1.0,clamp(uStarFlare.z*FLARE_STEADY,0.0,1.0));\n" +
+            "  }\n" +
             "  float twDelta=tw-1.0;\n" +
-            "  float soft=1.0+fl2*18.0;\n" +
             // Twinkle modulates brightness only. Width twinkle is meaningless
             // for a clamped sub-pixel star, and worse: it routed through the
             // energy compensation, which moves opposite the brightness wave
-            // and muted the twinkle. Width still widens for flares.
-            "  float kCore=2500.0/soft;\n" +
+            // and muted the twinkle. (Flares are no longer drawn here — they are
+            // an unclipped grid-space overlay in main(), like the nova, so their
+            // spikes can cross cell boundaries instead of being clipped.)
+            "  float kCore=2500.0;\n" +
             "  float kEff=(kCore*kPix)/(kCore+kPix);\n" +
             // ^0.75: mostly energy-conserving (kills alias shimmer) but lets a
             // resolved near star sit a touch brighter than its far clamped self.
             "  float core=exp(-d2*kEff)*bri*(1.0+twDelta*1.60)*pow(kEff/kCore,0.75);\n" +
             "  float eh=exp(-d2*100.0);\n" +
             "  float halo=eh*mag*0.15*(0.74+0.26*tw);\n" +
-            "  if(fl2>0.0001) halo+=exp(-d2*40.0)*fl2*0.9+exp(-d2*12.0)*fl2*0.30;\n" +
             "  float spike=0.0;\n" +
             "#ifndef ABL_NO_SPIKE\n" +
-            "  if(mag>SPIKE_THRESH||fl2>0.0001){\n" +
+            "  if(mag>SPIKE_THRESH){\n" +
             "    vec2 sdf=vec2(ca*df.x+sa*df.y,-sa*df.x+ca*df.y);\n" +
-            "    float spTight=32.0/((1.0+fl2*1.0)*max(0.45,1.0+twDelta*1.10));\n" +
+            "    float spTight=32.0/max(0.45,1.0+twDelta*1.10);\n" +
             "    float kSp=(5000.0*kPix)/(5000.0+kPix);\n" +
             "    float spWn=sqrt(kSp/5000.0);\n" + // 1D energy term for the widened cross-section
             "    float spH=exp(-sdf.y*sdf.y*kSp)*exp(-sdf.x*sdf.x*spTight)*spWn;\n" +
@@ -1169,7 +1222,58 @@ public class NebulaDream extends DreamService {
             "    vec3 nCol=mix(vec3(1.00,0.97,0.92),vec3(1.00,0.70,0.42),uNovaP*uNovaP);\n" +
             "    bg+=nCol*(nCore+nGlow+nSp);\n" +
             "  }\n" +
+            // FLARE: same unclipped grid-space overlay as the nova (was drawn
+            // inside starLayer, whose per-cell evaluation clipped spikes that
+            // crossed a cell boundary — often hiding 1-2 of the four spikes).
+            // Reconstruct the flaring star's grid position and lay the widened
+            // core, halo and short cross-spikes in grid units so they extend
+            // past the cell. The base star still renders steadily in starLayer;
+            // this adds the blaze on top. fv^2/fv^4 reproduce the old core/spike
+            // falloff (old bri = mag + 8*env^2, spike ~ bri^2).
+            "  if(uStarFlare.z>0.0001){\n" +
+            "    float vis=(uStarFlare.w<0.5)?f1:f2;\n" +
+            "    vec2 sF=(uStarFlare.w<0.5)?s1:s2;\n" +
+            "    float caF=(uStarFlare.w<0.5)?0.951:0.423; float saF=(uStarFlare.w<0.5)?0.309:0.906;\n" +
+            "    vec2 offF=(uStarFlare.w<0.5)?vec2(L0_OX,L0_OY):vec2(L1_OX,L1_OY);\n" +
+            "    vec2 cellF=vec2(uStarFlare.x,uStarFlare.y);\n" +
+            "    vec2 dgp=sF*(STAR_DEN*uStarScale)+offF-(cellF+h2(cellF+3.7));\n" +
+            "    float r2=dot(dgp,dgp);\n" +
+            "    float fv=uStarFlare.z; float fv2=fv*fv;\n" +
+            "    float fCore=exp(-r2*130.0)*fv2*8.0;\n" +
+            "    float fGlow=exp(-r2*40.0)*fv2*0.9+exp(-r2*12.0)*fv2*0.30;\n" +
+            "    vec2 fd=vec2(caF*dgp.x+saF*dgp.y,-saF*dgp.x+caF*dgp.y);\n" +
+            // Spikes EXTEND as the flare peaks (smaller coeff = longer reach), so
+            // the burst visibly throws its arms out and draws them back in rather
+            // than just brightening in place.
+            "    float spK=mix(26.0,11.0,fv);\n" +
+            // Anti-alias the spikes by pixel convolution, exactly as starLayer
+            // does for its own. Without this the thin gaussians (k=5000/9000 ->
+            // far narrower than a pixel) are point-sampled, so they shimmer as
+            // the star drifts across the pixel grid — which reads as the flare
+            // "twinkling" even though nothing here touches starTwinkle. spWn
+            // conserves energy so the widened spike does not brighten.
+            "    float pxcF=max(fwidth(dgp.x),fwidth(dgp.y));\n" +
+            "    float kPixF=1.0/(2.0*(0.50*pxcF)*(0.50*pxcF));\n" +
+            "    float kSpF=(5000.0*kPixF)/(5000.0+kPixF);\n" +
+            "    float spWnF=sqrt(kSpF/5000.0);\n" +
+            "    float fSp=(exp(-fd.y*fd.y*kSpF)*exp(-fd.x*fd.x*spK)\n" +
+            "              +exp(-fd.x*fd.x*kSpF)*exp(-fd.y*fd.y*spK))*fv2*fv2*30.0*spWnF;\n" +
+            // Secondary spike pair at 45 deg — shorter and much fainter, turning
+            // the plain 4-point cross into an 8-point burst.
+            "    vec2 fe=vec2((fd.x+fd.y)*0.70711,(fd.y-fd.x)*0.70711);\n" +
+            "    float kSp2F=(9000.0*kPixF)/(9000.0+kPixF);\n" +
+            "    float spWn2F=sqrt(kSp2F/9000.0);\n" +
+            "    float fSp2=(exp(-fe.y*fe.y*kSp2F)*exp(-fe.x*fe.x*spK*2.6)\n" +
+            "               +exp(-fe.x*fe.x*kSp2F)*exp(-fe.y*fe.y*spK*2.6))*fv2*fv2*8.0*spWn2F;\n" +
             "    float hmF=h1(cellF+7.7); float fmag=STAR_MAG_FLOOR+(1.0-STAR_MAG_FLOOR)*pow(hmF,STAR_MAG_POW);\n" +
+            "    vec3 fc0=starCol(h1(cellF+9.1),fmag);\n" +
+            // Chromatic layering instead of one flat tint: the core saturates to
+            // white-hot, the spikes carry the star's own colour, and the diffuse
+            // halo scatters cooler/bluer — the way a real bright point blooms.
+            "    vec3 fHot=mix(fc0,vec3(1.0),0.80);\n" +
+            "    vec3 fCool=mix(fc0,vec3(0.55,0.70,1.00),0.50);\n" +
+            "    bg+=(fHot*fCore + fc0*(fSp+fSp2) + fCool*fGlow)*vis;\n" +
+            "  }\n" +
             "  vec3 starSig=T*bg;\n" +
             // (deep-space floor moved to the gas pass with the haze)
             "  col+=starSig;\n" +
@@ -1895,8 +1999,20 @@ public class NebulaDream extends DreamService {
             sfEnv = 0f;
             if (sfStart >= 0f && t < sfStart + sfDur) {
                 float p = (t - sfStart) / sfDur;
-                float s = (float)Math.sin(Math.PI * p);
-                sfEnv = s * s;
+                // Asymmetric: abrupt rise, long decay, so the flare ignites and
+                // then fades rather than swelling in and out evenly. (Note the
+                // event's "quivering spike" character does NOT come from this
+                // envelope: the base star keeps twinkling at 0.6-1.4Hz under the
+                // overlay, and the spike term is fv^4, so spikes only bloom at
+                // the very tip of the envelope.)
+                if (p < FLARE_RISE) {
+                    float r = p / FLARE_RISE;
+                    sfEnv = r * r * (3f - 2f * r);        // smoothstep in
+                } else {
+                    float d = (p - FLARE_RISE) / (1f - FLARE_RISE);
+                    float k = 1f - d;
+                    sfEnv = (float)Math.pow(k, FLARE_DECAY_POW);
+                }
             }
         }
 
