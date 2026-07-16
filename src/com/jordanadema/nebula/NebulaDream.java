@@ -359,6 +359,16 @@ public class NebulaDream extends DreamService {
         private static final float FAR_STAR_SPEED = 0.45f; // fraction of near-star zoom speed
         private static final float FAR_STAR_DEN   = 1.6f;  // grid-density multiple (denser -> smaller, more numerous)
         private static final float FAR_STAR_BRI   = 0.55f; // brightness multiple (distance -> fainter)
+        // Flat star-density for the distant stratum, replacing the two vn()
+        // clustering-field lookups. Those run BEFORE the sparse-star early-out,
+        // so ~76% of pixels pay for them whether or not a cell holds a star —
+        // the bulk of starLayer's per-pixel cost, doubled by this layer. The
+        // distant field does not need its own clustering: it already gathers
+        // toward the band via sBias, and finer clumping is invisible on a faint,
+        // dense, far layer. 0.28 is the field's approximate mean, so the star
+        // COUNT is preserved — only the clustering goes. Measured: spikes cost
+        // 0.10ms and twinkle 1.14ms, so the vn() pair is what is worth cutting.
+        private static final float FAR_STAR_DENS  = 0.28f;
 
         // Galaxy population: the fraction of grid cells holding a galaxy is
         // (1 - threshold). Small galaxies are the texture tier; lowering the
@@ -503,6 +513,7 @@ public class NebulaDream extends DreamService {
             "#define FAR_STAR_SPEED " + FAR_STAR_SPEED + "\n" +
             "#define FAR_STAR_DEN "   + FAR_STAR_DEN   + "\n" +
             "#define FAR_STAR_BRI "   + FAR_STAR_BRI   + "\n" +
+            "#define FAR_STAR_DENS "  + FAR_STAR_DENS  + "\n" +
             "#define GAL_SMALL_THRESH " + GAL_SMALL_THRESH + "\n";
 
         private static final String VERT_ES3 =
@@ -912,7 +923,7 @@ public class NebulaDream extends DreamService {
             "  return 1.0+amt*(wave-0.5);\n" +
             "#endif\n" +
             "}\n" +
-            "vec3 starLayer(vec2 uv,float den,float ox,float oy,float ca,float sa,float lid){\n" +
+            "vec3 starLayer(vec2 uv,float den,float ox,float oy,float ca,float sa,float lid,float densField){\n" +
             "  vec2 gp=uv*den+vec2(ox,oy);\n" +
             // Anti-alias by pixel convolution: star cores are far narrower than
             // a screen pixel (sigma ~0.34px at 1080p), so grid alignment used to
@@ -926,9 +937,12 @@ public class NebulaDream extends DreamService {
             "  vec2 cell=floor(gp),f=fract(gp);\n" +
             "  float h=h1(cell);\n" +
             "  if(h<STAR_FLOOR) return vec3(0.0);\n" +
-            "  float dn=vn(cell*SD_FREQ_LO+vec2(ox*0.1,oy*0.1))*SD_W_LO+vn(cell*SD_FREQ_HI+11.0)*SD_W_HI;\n" +
-            "  float dens=smoothstep(SD_SS_LO,SD_SS_HI,dn);\n" +
-            "  dens*=dens;\n" +
+            "  float dens;\n" +
+            "  if(densField>0.5){\n" +
+            "    float dn=vn(cell*SD_FREQ_LO+vec2(ox*0.1,oy*0.1))*SD_W_LO+vn(cell*SD_FREQ_HI+11.0)*SD_W_HI;\n" +
+            "    dens=smoothstep(SD_SS_LO,SD_SS_HI,dn);\n" +
+            "    dens*=dens;\n" +
+            "  } else { dens=FAR_STAR_DENS; }\n" +
             "  float thresh=STAR_CEIL-dens*STAR_RANGE;\n" +
             "  if(h<thresh) return vec3(0.0);\n" +
             "  vec2 df=f-h2(cell+3.7);\n" +
@@ -1124,8 +1138,8 @@ public class NebulaDream extends DreamService {
             "  }\n" +
             "  float sBias=1.0+0.5*band*brift;\n" +
             "#ifndef ABL_NO_STARS\n" +
-            "  bg+=starLayer(s1,STAR_DEN*uStarScale,L0_OX,L0_OY,0.951,0.309,0.0)*f1*sBias;\n" +
-            "  bg+=starLayer(s2,STAR_DEN*uStarScale,L1_OX,L1_OY,0.423,0.906,1.0)*f2*sBias;\n" +
+            "  bg+=starLayer(s1,STAR_DEN*uStarScale,L0_OX,L0_OY,0.951,0.309,0.0,1.0)*f1*sBias;\n" +
+            "  bg+=starLayer(s2,STAR_DEN*uStarScale,L1_OX,L1_OY,0.423,0.906,1.0,1.0)*f2*sBias;\n" +
             "#endif\n" +
             // Distant star stratum: own slow 2-phase crossfade cycle (0.45x), so
             // it parallaxes as a more-distant layer without touching the near
@@ -1141,11 +1155,11 @@ public class NebulaDream extends DreamService {
             "  float ff2=smoothstep(0.10,0.30,ft2)*(1.0-smoothstep(0.70,0.90,ft2));\n" +
             "  if(ff1>0.001){\n" +
             "    vec2 fs1=sr1/exp(ft1*SZ_MAX)+0.5+uSeed;\n" +
-            "    bg+=starLayer(fs1,STAR_DEN*uStarScale*FAR_STAR_DEN,0.71,0.53,0.951,0.309,3.0)*ff1*sBias*FAR_STAR_BRI;\n" +
+            "    bg+=starLayer(fs1,STAR_DEN*uStarScale*FAR_STAR_DEN,0.71,0.53,0.951,0.309,3.0,0.0)*ff1*sBias*FAR_STAR_BRI;\n" +
             "  }\n" +
             "  if(ff2>0.001){\n" +
             "    vec2 fs2=sr2/exp(ft2*SZ_MAX)+0.5+uSeed;\n" +
-            "    bg+=starLayer(fs2,STAR_DEN*uStarScale*FAR_STAR_DEN,0.19,0.83,0.423,0.906,4.0)*ff2*sBias*FAR_STAR_BRI;\n" +
+            "    bg+=starLayer(fs2,STAR_DEN*uStarScale*FAR_STAR_DEN,0.19,0.83,0.423,0.906,4.0,0.0)*ff2*sBias*FAR_STAR_BRI;\n" +
             "  }\n" +
             "#endif\n" +
             // Galaxies get their own zoom phase at quarter speed: they are
