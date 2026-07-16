@@ -251,6 +251,25 @@ public class NebulaDream extends DreamService {
         private static final float GAS_HDR_CEIL = 0.3600f;  // 0.37 ->0.3145 ->0.2673 ->0.2272 (each -15%), +25% ->0.2840, now +27% ->0.36.  // ERO_HI carves interior form OUT of density, so cranking it thins the gas  // (mean x0.70 at 0.60). Brightness pays that back so form and presence rise together.
         private static final float GAS_HDR_KNEE = 1.25f; // gas starts boosting later than stars
         private static final float GAS_HDR_GAIN = 0.27f; // and climbs far more slowly once it does
+        // Gas emission contrast (the lever the ceiling cuts above could not be):
+        // the bulk emission is LINEAR in density, so a broad moderate-density
+        // region accumulates into a large, uniform, fully saturated wash — the
+        // "undifferentiated technicolor field." Dropping the HDR ceiling only
+        // dims that wash uniformly; it stays a wash (the 0.37->0.2272 cuts above
+        // are exactly that, and it still dominates the frame). This curve instead
+        // suppresses the low-mid body while leaving the dense hearts (which reach
+        // GAS_CONTRAST_KNEE) untouched, so the field reads as a few bright masses
+        // over dark space, not one glow. FLOOR = how far the dimmest gas is pushed
+        // down; KNEE = accumulated luminance at which gas returns to full
+        // strength. Peaks are never boosted — average field brightness drops too.
+        private static final float GAS_CONTRAST_FLOOR = 0.42f;
+        private static final float GAS_CONTRAST_KNEE  = 0.85f;
+        // saturation and a raised ceiling: undifferentiated technicolor blobs,
+        // the one thing the nebula must never do. Brightness cannot separate
+        // cores from bright wash; only a true core signal (a second render
+        // target from the gas pass) can. Until then cores stay folded into the
+        // gas. Set CEIL>GAS_HDR_CEIL and DESAT_KEEP>0 to re-enable.
+        private static final float CORE_HDR_CEIL  = GAS_HDR_CEIL;
 
         // Star rendering
         private static final float SPIKE_THRESH = 0.65f;
@@ -580,6 +599,14 @@ public class NebulaDream extends DreamService {
             "  }\n" +
             "#endif\n" +
             "  col*=0.95;\n" + // gain for the tonemap (slightly dimmer overall)
+            // Emission contrast: suppress the broad low-mid wash, keep the dense
+            // hearts. Drives the gas from a uniform saturated field toward a few
+            // bright masses over dark space — the differentiation the linear
+            // emission never had, and which ceiling cuts could not create. Keyed
+            // on peak channel (hue-preserving) and never exceeds 1.0, so no
+            // highlight is boosted; the mid body just falls away.
+            "  float gcl=max(max(col.r,col.g),col.b);\n" +
+            "  col*=mix(GAS_CONTRAST_FLOOR,1.0,smoothstep(0.0,GAS_CONTRAST_KNEE,gcl));\n" +
 
             // Galaxy haze + deep-space floor BEHIND the gas (same three-phase star
             // zoom as the comp pass, so haze and stars move as one entity).
@@ -1055,7 +1082,10 @@ public class NebulaDream extends DreamService {
             // kept (it still rolls off cleanly) but GAS_HDR_GAIN stretches it so
             // the gas separates across its whole range instead of saturating just
             // past the knee — that separation IS the texture inside a bright mass.
-            "    float gasMax=1.0+(uHdrMax-1.0)*GAS_HDR_CEIL;\n" +
+            // Wash ceiling, lifted toward the core ceiling for masked core pixels
+            // (raises both the boost ceiling and the rolloff point, so a core
+            // actually climbs above the restrained wash).
+            "    float gasMax=1.0+(uHdrMax-1.0)*mix(GAS_HDR_CEIL,CORE_HDR_CEIL,coreMask);\n" +
             "    float hi=max(lum-uHdrKnee*GAS_HDR_KNEE,0.0);\n" +
             "    float boostMax=max(gasMax-1.0,1.0);\n" +
             "    float boost=boostMax*(1.0-exp(-(uHdrGain*GAS_HDR_GAIN*hi)/boostMax));\n" +
