@@ -1,0 +1,11 @@
+Deeper nebulas, more varied stars:
+
+• Bright nebula interiors keep their eroded texture instead of blowing out into flat blobs — the densest gas was smooth by construction before, so the brightest masses always lost their form
+• Nebula gas now has its own HDR curve, separate from the stars': bright masses stay textured instead of turning into an undifferentiated wash
+• Warm nebula regions calmed from bright yellow to muted amber
+• Stars span a far wider brightness range — fewer bright ones, more faint ones at every level
+• A new distant star layer drifts slower than the near stars, adding real depth
+• Roughly 1.7x more small galaxies
+• Flares and novas now fire only on genuinely bright stars, with an eight-point burst, chromatic core and halo, and a longer fade
+• Fixed shimmering flare spikes (an aliasing bug, not the twinkle)
+• Dimmer milky-way glow and a sparser off-band starfield

@@ -2,6 +2,74 @@
 
 All notable changes to Nebula are documented here.
 
+## 4.10.0 — 2026-07-16
+
+A structural fix to the nebula plus a rebuilt star population. The gas keeps
+its form where it is brightest, stars span a far wider range, and a distant
+stratum adds real parallax depth — paid for by making the star field cheaper,
+so the adaptive gas scale rises rather than falls.
+
+### Added
+- **Distant star stratum** — a star field on its own slow (0.45×) crossfade
+  cycle, filling the gap between the near stars (1.0×) and the galaxies
+  (0.25×). The two near layers share one zoom curve and merely hand off, so
+  they are a crossfade rather than depth; farther things moving slower is what
+  actually reads as parallax. Denser and dimmer sells the distance, and it
+  concentrates toward the band like every other stellar population.
+- **Tunable knobs** for band brightness (one master scale over both the halo
+  and grain gains, so brightness moves without disturbing the band's
+  character), small-galaxy population, off-band sprinkle density, star
+  magnitude floor/exponent, and the gas erosion terms.
+
+### Fixed
+- **The brightest nebula patches no longer blow out into featureless blobs.**
+  The erosion was applied as a floor-lift-and-renormalise, whose top always
+  maps back to 1.0 — so the erosion noise had mathematically *zero* effect as
+  density approached 1 (58% texture range at d=0.3, 4% at d=0.85, 0% at d=1.0).
+  The densest gas was therefore smooth by construction, and dense means bright.
+  No tonemap or HDR tuning could have fixed it: the texture was already gone
+  inside the raymarch. A non-renormalising term now carves at every density.
+- **Flare spikes no longer shimmer.** Not the twinkle, as it appeared: the
+  overlay's spikes were thin gaussians point-sampled without the pixel
+  convolution `starLayer` applies to its own, so they aliased as the star
+  drifted across the pixel grid.
+
+### Changed
+- **Gas has its own HDR curve.** It shared the stars': a curve that saturates
+  right after the knee, which is correct for a point highlight and wrong for a
+  volume — every mass past the knee jumped to near-peak at once, flattening its
+  density variation at full saturation. Gas now has a later knee, slower ramp
+  and lower ceiling, and its bright end desaturates toward white rather than
+  screaming. A contrast pass suppresses the broad low-mid wash (which no
+  ceiling cut could fix — dimming a wash uniformly leaves a wash), so the field
+  reads as masses over dark space.
+- **Star brightness distribution rebuilt.** Most stars read as pinned near
+  full: the magnitudes were already faint-skewed, but the HDR star boost
+  saturated right after the knee, pinning a 2.7× spread of real brightness into
+  a 3% spread of output. Variety is now the population's job — a steeper
+  magnitude exponent (fewer bright, more faint at every level) and a deeper
+  floor (intrinsic range 6.25× → 12.5×) — while the curve stays high enough
+  that the brightest stars still reach the panel's maximum.
+- **Warm gas calmed** — the warm stop is a muted amber, its emission boost cut
+  from +45% to +15%, and the whole-scene warm excursion is milder.
+- **Flares and novas ride bright stars** — the picker mirrored the shader's
+  star-existence test but ignored brightness, so a faint star could suddenly
+  out-blaze its neighbours. Flares now select the top ~26%, novas the top ~12%.
+  The burst gained a second 45° spike pair, envelope-driven spike length, a
+  white-hot core with a cooler halo, and an asymmetric fast-rise/slow-decay
+  envelope. A flaring star also steadies as it ignites.
+- **More small galaxies** (~1.8% → ~3.0% of cells), **thinner off-band
+  speckles** (~20% fewer, band untouched), and a **dimmer band glow** (~72% of
+  its previous brightness; the band's resolved stars are untouched, so it reads
+  as stars rather than haze).
+- **Star field made cheaper to fund the nebula.** The adaptive scaler pays for
+  composite time by shrinking the gas FBO, so star work costs nebula detail.
+  The distant stratum now uses a flat density instead of two value-noise
+  clustering lookups that ran before the sparse-star early-out (~76% of pixels
+  paid for them regardless). Star count is unchanged. Composite 13.71 → 12.64 ms;
+  gas 589×332 → 733×413, now capped by the render-scale setting rather than the
+  GPU budget.
+
 ## 4.9.0 — 2026-07-12
 
 Follow-up to the 4.8.0 capture review: rare events land, warm scenes glow.
