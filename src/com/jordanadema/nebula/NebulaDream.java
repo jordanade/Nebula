@@ -322,10 +322,31 @@ public class NebulaDream extends DreamService {
         private static final float STAR_MAG_FLOOR = 0.08f;
         private static final float STAR_MAG_POW   = 5.0f;
 
-        // Flare scheduling: rare events, not texture. Gaps trimmed from 40-180s
-        // to 24-104s (2026-07-14) alongside the on-screen placement fix — most
-        // flares used to fire off-screen (the candidate box ignored the star
-        // layer's rotation), so the visible rate was far below the schedule.
+        // Distant star stratum: fills the empty gap between the near stars (1.0x
+        // zoom speed) and the galaxies (0.25x). A slower, dimmer, denser star
+        // field reads as genuinely more distant — real parallax, not the
+        // phase-staggered crossfade of one speed that the two near layers are.
+        // Runs on its OWN independent 2-phase cycle (like the galaxies), so it
+        // never touches L0/L1_PHASE and the flare/nova scheduler stays untouched.
+        // Its two calls are each gated behind their fade weight (frame-coherent,
+        // no warp divergence) so each is free during its ~20% off-window.
+        private static final float FAR_STAR_SPEED = 0.45f; // fraction of near-star zoom speed
+        private static final float FAR_STAR_DEN   = 1.6f;  // grid-density multiple (denser -> smaller, more numerous)
+        private static final float FAR_STAR_BRI   = 0.55f; // brightness multiple (distance -> fainter)
+
+        // Galaxy population: the fraction of grid cells holding a galaxy is
+        // (1 - threshold). Small galaxies are the texture tier; lowering the
+        // threshold populates more cells. 0.982 -> 0.970 takes the small
+        // population from ~1.8% to ~3.0% of cells (~1.7x). The big/showpiece
+        // tier stays rare (its own threshold in galaxyBigLayer). Cost is
+        // near-free: the per-pixel cell lookup runs regardless of the threshold.
+        private static final float GAL_SMALL_THRESH = 0.970f;
+
+        // Flare scheduling. Gaps walked 40-180s -> 24-104s -> 10-40s: placement
+        // is verified on-screen (the rotation-aware picker), so the low visible
+        // rate was purely the schedule. 10-40s gap + 4-8s duration ~= a flare
+        // every ~15-50s (avg ~30s), frequent enough to notice without becoming
+        // texture.
         private static final float FLARE_DUR_MIN = 4.0f;
         private static final float FLARE_DUR_RNG = 4.0f;
         private static final float FLARE_GAP_MIN = 24.0f;
@@ -1028,6 +1049,27 @@ public class NebulaDream extends DreamService {
             "#ifndef ABL_NO_STARS\n" +
             "  bg+=starLayer(s1,STAR_DEN*uStarScale,L0_OX,L0_OY,0.951,0.309,0.0)*f1*sBias;\n" +
             "  bg+=starLayer(s2,STAR_DEN*uStarScale,L1_OX,L1_OY,0.423,0.906,1.0)*f2*sBias;\n" +
+            "#endif\n" +
+            // Distant star stratum: own slow 2-phase crossfade cycle (0.45x), so
+            // it parallaxes as a more-distant layer without touching the near
+            // layers' phases or the scheduler. Denser + dimmer sells the
+            // distance. Each add is gated behind its fade weight — the weights
+            // depend only on uTime, so the branch is coherent across the frame
+            // and the layer costs nothing during its ~20% faded-out window.
+            "#ifndef ABL_NO_FARSTARS\n" +
+            "  float fph=uTime*SZSP*FAR_STAR_SPEED;\n" +
+            "  float ft1=fract(fph+0.0);\n" +
+            "  float ft2=fract(fph+0.5);\n" +
+            "  float ff1=smoothstep(0.10,0.30,ft1)*(1.0-smoothstep(0.70,0.90,ft1));\n" +
+            "  float ff2=smoothstep(0.10,0.30,ft2)*(1.0-smoothstep(0.70,0.90,ft2));\n" +
+            "  if(ff1>0.001){\n" +
+            "    vec2 fs1=sr1/exp(ft1*SZ_MAX)+0.5+uSeed;\n" +
+            "    bg+=starLayer(fs1,STAR_DEN*uStarScale*FAR_STAR_DEN,0.71,0.53,0.951,0.309,3.0)*ff1*sBias*FAR_STAR_BRI;\n" +
+            "  }\n" +
+            "  if(ff2>0.001){\n" +
+            "    vec2 fs2=sr2/exp(ft2*SZ_MAX)+0.5+uSeed;\n" +
+            "    bg+=starLayer(fs2,STAR_DEN*uStarScale*FAR_STAR_DEN,0.19,0.83,0.423,0.906,4.0)*ff2*sBias*FAR_STAR_BRI;\n" +
+            "  }\n" +
             "#endif\n" +
             // Galaxies get their own zoom phase at quarter speed: they are
             // effectively at infinity, so they should show almost no parallax
