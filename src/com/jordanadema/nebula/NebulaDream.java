@@ -454,9 +454,9 @@ public class NebulaDream extends DreamService {
             // scene warm-rose or deep blue for a few minutes, so a long session
             // sees genuinely different moods, not one constant violet.
             "  float excN=texture(uNoise,vec3(uTime*0.0011+uSeed.x,0.73,0.29)).r;\n" +
-            "  float tempBias=0.35*(1.0-smoothstep(0.20,0.38,excN))-0.35*smoothstep(0.62,0.80,excN);\n" +
+            "  float tempBias=0.35*(1.0-smoothstep(0.20,0.38,excN))-0.24*smoothstep(0.62,0.80,excN);\n" +
             "  float temp=clamp((reg-0.5)*1.5+0.60+tempBias,0.0,1.0);\n" +
-            "  vec3 warm=vec3(1.00,0.60,0.24);\n" +  // amber-gold (rare warm accent; redder stops went brown at low emission)
+            "  vec3 warm=vec3(0.88,0.55,0.26);\n" +  // muted amber (was 1.00,0.60,0.24 — too bright/yellow; redder stops went brown at low emission)
             "  vec3 pink=vec3(0.96,0.28,0.60);\n" +  // magenta-pink
             "  vec3 midc=vec3(0.49,0.14,0.94);\n" +  // deep violet
             "  vec3 cool=vec3(0.31,0.50,1.00);\n" +  // blue
@@ -468,7 +468,7 @@ public class NebulaDream extends DreamService {
             // emission toward the warm end, and let the ambient follow the region
             // colour there (fixed violet ambient greyed dim orange into mud).
             "  float warmSide=smoothstep(0.10,0.45,temp);\n" +
-            "  float warmB=1.0+0.45*(1.0-warmSide);\n" +
+            "  float warmB=1.0+0.15*(1.0-warmSide);\n" + // was 0.45: warm gas read too bright/blobby. Keeps a small lift off dim-brown mud without pumping.
             "  vec3 ambCol=mix(vec3(0.09,0.07,0.24),tcol*0.30,mix(0.75,0.40,warmSide));\n" +
             "  float t=1.35+fract(sin(dot(gl_FragCoord.xy,vec2(41.3,289.1))+uTime)*43758.5)*0.08;\n" + // start beyond camera-origin gas; prevents full-frame color wash when flying through a cloud
             "  float T=1.0; vec3 col=vec3(0.0);\n" +
