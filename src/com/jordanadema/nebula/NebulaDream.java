@@ -374,9 +374,14 @@ public class NebulaDream extends DreamService {
         // (1 - threshold). Small galaxies are the texture tier; lowering the
         // threshold populates more cells. 0.982 -> 0.970 takes the small
         // population from ~1.8% to ~3.0% of cells (~1.7x). The big/showpiece
-        // tier stays rare (its own threshold in galaxyBigLayer). Cost is
-        // near-free: the per-pixel cell lookup runs regardless of the threshold.
+        // tier stays rare (see GAL_BIG_THRESH). Cost is near-free: the
+        // per-pixel cell lookup runs regardless of the threshold.
         private static final float GAL_SMALL_THRESH = 0.970f;
+        // Showpiece-galaxy rarity: ~0.35% of cells, about one in view every
+        // ~10 minutes. Shared with the CPU visibility gate (bigGalaxyVisible),
+        // which must test the exact same threshold the shader does — if the two
+        // disagree the gate can hide a galaxy the shader would have drawn.
+        private static final float GAL_BIG_THRESH = 0.9965f;
 
         // Flare scheduling. Gaps walked 40-180s -> 24-104s -> 10-40s: placement
         // is verified on-screen (the rotation-aware picker), so the low visible
@@ -514,7 +519,8 @@ public class NebulaDream extends DreamService {
             "#define FAR_STAR_DEN "   + FAR_STAR_DEN   + "\n" +
             "#define FAR_STAR_BRI "   + FAR_STAR_BRI   + "\n" +
             "#define FAR_STAR_DENS "  + FAR_STAR_DENS  + "\n" +
-            "#define GAL_SMALL_THRESH " + GAL_SMALL_THRESH + "\n";
+            "#define GAL_SMALL_THRESH " + GAL_SMALL_THRESH + "\n" +
+            "#define GAL_BIG_THRESH " + GAL_BIG_THRESH + "\n";
 
         private static final String VERT_ES3 =
             "#version 300 es\n" +
@@ -876,6 +882,9 @@ public class NebulaDream extends DreamService {
             "uniform sampler2D uBandLut;\n" + // shared with the gas pass; see there
             "uniform vec2 uSeed;\n" +
             "uniform sampler2D uGas;\n" +
+            // Per-layer showpiece-galaxy presence: x for layer 0, y for layer
+            // 1; 1.0 when one is in frame. See galaxyBigLayer.
+            "uniform vec2 uGalBigOn;\n" +
             // Baked sky layer: sprinkles+carpet in rgb, band-grain noise in a.
             // uSky is the current epoch's bake, uSkyPrev the previous one; the
             // sprinkle dots cross-dissolve between them (uSprBlend 0->1) at each
@@ -910,6 +919,14 @@ public class NebulaDream extends DreamService {
             "#ifdef ABL_NO_TWINKLE\n" +
             "  return 1.0;\n" +
             "#else\n" +
+            // The distant stratum does not twinkle. Its stars are packed 1.6x
+            // denser (so sub-pixel) and, being far, are the ones scintillation
+            // would be least readable on — meanwhile amt=mix(0.85,0.40,mag)
+            // gives the FAINTEST stars the largest amplitude, so this layer was
+            // paying the most for the least. lid is a literal at every call
+            // site, so this folds away at compile time rather than branching:
+            // the near layers keep the full twinkle, the far pair drops it.
+            "  if(lid>2.5) return 1.0;\n" + // far stratum is lid 3/4; near layers are 0/1
             "  float seed=h1(cell+vec2(17.0+lid*13.0,31.0-lid*7.0));\n" +
             "  float rate=mix(0.60,1.40,h1(cell+5.3+lid*1.7));\n" + // lively sparkle: 0.7-1.7s per cycle
             "  float ph=6.2831853*(seed+uTime*rate);\n" +
@@ -1024,11 +1041,24 @@ public class NebulaDream extends DreamService {
             // 3-4x galaxy with readable two-arm structure and a dust lane along
             // the midplane. Roughly one drifts through view every ~10 minutes —
             // the small population is texture, this is an event.
-            "vec3 galaxyBigLayer(vec2 uv,float den,float ox,float oy){\n" +
+            // `on` is 1.0 only while a showpiece galaxy is actually within
+            // frame on this layer, which the CPU decides once per frame (see
+            // bigGalaxyVisible). These are rare enough that most of the time no
+            // layer has one in view, and this returns before touching a pixel.
+            //
+            // Reaching the h1 rejection below is not free: gp/floor/fract plus
+            // the hash ran for all ~2M pixels on both layers to discard 99.65%
+            // of them, measured at 1.80ms. (The same probe showed only 0.27ms
+            // of GALBIG's 2.07ms ablation delta is register pressure that no
+            // runtime gate could recover — so this gate collects nearly all of
+            // it.) The h1 test stays: when a galaxy IS in view it still picks
+            // out which cell, so the drawn result is bit-identical to before.
+            "vec3 galaxyBigLayer(vec2 uv,float den,float ox,float oy,float on){\n" +
+            "  if(on<0.5) return vec3(0.0);\n" +
             "  vec2 gp=uv*den+vec2(ox,oy);\n" +
             "  vec2 cell=floor(gp),f=fract(gp);\n" +
             "  float h=h1(cell+vec2(19.7,3.9));\n" +
-            "  if(h<0.9965) return vec3(0.0);\n" +
+            "  if(h<GAL_BIG_THRESH) return vec3(0.0);\n" +
             "  vec2 df=f-(vec2(0.40)+0.20*h2(cell+11.3));\n" + // keep the big smudge well clear of cell edges
             "  float gang=6.2831*h1(cell+3.1);\n" +
             "  vec2 grot=vec2(cos(gang)*df.x+sin(gang)*df.y,-sin(gang)*df.x+cos(gang)*df.y);\n" +
@@ -1175,10 +1205,14 @@ public class NebulaDream extends DreamService {
             "  float gf2=smoothstep(0.10,0.30,g2)*(1.0-smoothstep(0.70,0.90,g2));\n" +
             "  vec2 gs1=sr1/exp(g1*SZ_MAX)+0.5+uSeed;\n" +
             "  vec2 gs2=sr2/exp(g2*SZ_MAX)+0.5+uSeed;\n" +
+            "#ifndef ABL_NO_GALSMALL\n" +
             "  bg+=galaxyLayer(gs1,STAR_DEN*uStarScale*0.25,L0_OX,L0_OY)*gf1;\n" +
             "  bg+=galaxyLayer(gs2,STAR_DEN*uStarScale*0.25,L1_OX,L1_OY)*gf2;\n" +
-            "  bg+=galaxyBigLayer(gs1,STAR_DEN*uStarScale*0.075,L0_OX,L0_OY)*gf1;\n" +
-            "  bg+=galaxyBigLayer(gs2,STAR_DEN*uStarScale*0.075,L1_OX,L1_OY)*gf2;\n" +
+            "#endif\n" +
+            "#ifndef ABL_NO_GALBIG\n" +
+            "  bg+=galaxyBigLayer(gs1,STAR_DEN*uStarScale*0.075,L0_OX,L0_OY,uGalBigOn.x)*gf1;\n" +
+            "  bg+=galaxyBigLayer(gs2,STAR_DEN*uStarScale*0.075,L1_OX,L1_OY,uGalBigOn.y)*gf2;\n" +
+            "#endif\n" +
             "#endif\n" +
             // Milky-Way band grain: the two expensive noise octaves are baked
             // into uSky.a; the band structure (tint/rift/soft-knee) is re-applied
@@ -1480,7 +1514,7 @@ public class NebulaDream extends DreamService {
         private int progGas, gAPos, gUTime, gURes, gUNoise, gUZoom, gUSeed, gUStarScale, gUBandLut;
         // Pass 2 (composite, native res): program + locations
         private int progComp, cAPos, cUTime, cURes, cUZoom, cUHdr, cUHdrKnee, cUHdrGain, cUHdrMax,
-            cUHdrStarGain, cUHdrStarMax, cUStarFlare, cUSeed, cUGas, cUStarScale, cUBandLut;
+            cUHdrStarGain, cUHdrStarMax, cUStarFlare, cUSeed, cUGas, cUStarScale, cUBandLut, cUGalBigOn;
         private int noiseTex;            // v4: 3D noise texture
         // 256x1 RGBA8 bake of the 1D along-band terms (see uBandLut in the
         // shaders); refreshed each frame on the CPU — 256 cpuVn samples.
@@ -1712,6 +1746,7 @@ public class NebulaDream extends DreamService {
             cUNova   = GLES20.glGetUniformLocation(progComp,"uNova");
             cUNovaP  = GLES20.glGetUniformLocation(progComp,"uNovaP");
             cUGas    = GLES20.glGetUniformLocation(progComp,"uGas");
+            cUGalBigOn = GLES20.glGetUniformLocation(progComp,"uGalBigOn");
             cUStarScale = GLES20.glGetUniformLocation(progComp,"uStarScale");
             cUBandLut = GLES20.glGetUniformLocation(progComp,"uBandLut");
             cUSky    = GLES20.glGetUniformLocation(progComp,"uSky");
@@ -1948,6 +1983,15 @@ public class NebulaDream extends DreamService {
             GLES20.glActiveTexture(GLES20.GL_TEXTURE0);
             GLES20.glBindTexture(GLES20.GL_TEXTURE_2D,gasTex);
             GLES20.glUniform1i(cUGas,0);
+            // Showpiece-galaxy gate, recomputed per frame. The galaxy layers
+            // ride their own quarter-speed zoom phase (gph below mirrors the
+            // shader), so the visible cell box moves and must be re-tested.
+            float gph = t * SZ_SPEED * zoomMul * 0.25f;
+            float gp1 = cpuFract(gph + L0_PHASE);
+            float gp2 = cpuFract(gph + L1_PHASE);
+            GLES20.glUniform2f(cUGalBigOn,
+                bigGalaxyVisible(gp1, L0_OX, L0_OY, 0.951f, 0.309f) ? 1f : 0f,
+                bigGalaxyVisible(gp2, L1_OX, L1_OY, 0.423f, 0.906f) ? 1f : 0f);
             GLES20.glUniform1i(cUBandLut,1);
             if (cUSky >= 0) {
                 GLES20.glActiveTexture(GLES20.GL_TEXTURE2);
@@ -2081,6 +2125,53 @@ public class NebulaDream extends DreamService {
                 end = 1f - end * end * (3f - 2f * end);
                 nvEnv = rise * fall * end;
             }
+        }
+
+        // Is a showpiece galaxy in frame on this star layer? Maps the four
+        // screen corners through the shader's own transform to get the visible
+        // cell box, then tests the same hash the shader does.
+        //
+        // Answering per-layer (not per-cell) is all the shader needs: once the
+        // gate opens it runs its normal per-pixel hash, so it still finds every
+        // visible galaxy itself and draws an identical result. The gate only
+        // decides whether the layer is worth looking at.
+        //
+        // The grid is deliberately coarse (den ~6 across the frame), so this
+        // scans a few dozen cells per layer per frame — nothing next to the
+        // 1.80ms/frame it saves the GPU. MUST NOT under-report: a false
+        // negative pops a galaxy out of the sky, so the box is padded by a
+        // cell, and the mapping is affine (rotate + uniform scale + translate),
+        // so the corners' bounding box provably contains every cell any pixel
+        // can land in.
+        private boolean bigGalaxyVisible(float zoomPhase, float ox, float oy,
+                                         float ca, float sa) {
+            if (screenW <= 0 || screenH <= 0) return true; // unknown frame: never hide
+
+            float den  = STAR_DEN * starScale * 0.075f;
+            float zoom = (float) Math.exp(zoomPhase * SZ_MAX);
+            float aspect = (float) screenH / screenW;
+            float minX = Float.MAX_VALUE, maxX = -Float.MAX_VALUE;
+            float minY = Float.MAX_VALUE, maxY = -Float.MAX_VALUE;
+            for (int i = 0; i < 4; i++) {
+                float scx = ((i & 1) == 0 ? -0.5f : 0.5f);
+                float scy = ((i & 2) == 0 ? -0.5f : 0.5f) * aspect;
+                // sr = R(sc), matching the shader's sr1/sr2 construction.
+                float srx = ca * scx - sa * scy;
+                float sry = sa * scx + ca * scy;
+                // gs = sr/zoom + 0.5 + seed;  gp = gs*den + offset
+                float gpx = (srx / zoom + 0.5f + seedX) * den + ox;
+                float gpy = (sry / zoom + 0.5f + seedY) * den + oy;
+                minX = Math.min(minX, gpx); maxX = Math.max(maxX, gpx);
+                minY = Math.min(minY, gpy); maxY = Math.max(maxY, gpy);
+            }
+            int c0x = (int) Math.floor(minX) - 1, c1x = (int) Math.floor(maxX) + 1;
+            int c0y = (int) Math.floor(minY) - 1, c1y = (int) Math.floor(maxY) + 1;
+            for (int cy = c0y; cy <= c1y; cy++) {
+                for (int cx = c0x; cx <= c1x; cx++) {
+                    if (cpuH1(cx + 19.7f, cy + 3.9f) >= GAL_BIG_THRESH) return true;
+                }
+            }
+            return false;
         }
 
         private float initialGasScale(int w, int h) {
