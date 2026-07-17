@@ -265,8 +265,8 @@ public class NebulaDream extends DreamService {
         private static final float ERO2_BITE = 0.30f;
         private static final float ERO_HI    = 0.60f;
 
-        // Galaxy haze
-        private static final float HAZE_MUL    = 0.22f;
+        // Galaxy haze. 0.22 -> 0.242 (+10%).
+        private static final float HAZE_MUL    = 0.242f;
 
         // Star-forming cores: the densest gas hearts bloom toward white-pink
         // and ride the HDR chain, giving frames a luminous focal point.
