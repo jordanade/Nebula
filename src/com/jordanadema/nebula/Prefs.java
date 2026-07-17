@@ -38,13 +38,33 @@ final class Prefs {
 
     float renderScale() { return clampF(getIntPref(RENDER_SCALE, 40) / 100f, 0.10f, 1.0f); }
 
-    // Slider 1..10; 4 is the neutral point where zoomMul is exactly 1.0, and
-    // the curve stays anchored there so the stored value keeps its meaning.
-    // Only the DEFAULT moves to 5 (zoomMul ~1.335) — must match the
-    // android:defaultValue in res/xml/prefs.xml.
+    // Zoom multiplier over the 1..10 slider: geometric, so every notch is the
+    // same PROPORTIONAL change rather than the same absolute one — a notch near
+    // the slow end and a notch near the fast end feel like the same adjustment.
+    //
+    // ZOOM_STEP is that per-notch change, stated directly: 1.20 = +20% per
+    // notch. (The curve used to be written as 2^((s-4)/2.4), where the step was
+    // an exponent divisor — 2.4 meaning 33.5% per notch, which you had to work
+    // out. Expressing the step itself keeps the knob honest.) Over 1..10 this
+    // spans 0.64-3.32, a 5.2x range.
+    //
+    // Anchored at the DEFAULT slider (5), so ZOOM_STEP only tightens or widens
+    // the slider around the default and can never move it. ZOOM_AT_DEFAULT is
+    // the speed slider 5 has always resolved to, 2^(1/2.4) ~= 1.335, kept in
+    // that form so it stays bit-identical to the original curve's value there.
+    //
+    // NOTE: changing ZOOM_STEP re-maps what a STORED slider value means — a
+    // saved 10 was 5.66 under the original curve and is 3.32 now. Fresh
+    // installs are unaffected (the default is anchored), but anyone who had
+    // moved the slider silently gets a different speed.
+    //
+    // Default must match android:defaultValue in res/xml/prefs.xml.
+    private static final double ZOOM_STEP       = 1.20;                 // per-notch change
+    private static final double ZOOM_AT_DEFAULT = Math.pow(2.0, 1.0 / 2.4); // speed at slider 5
+
     float zoomMul() {
         int s = getIntPref(ZOOM_SPEED, 5);
-        return Math.max(0.15f, (float)Math.pow(2.0, (s - 4) / 2.4));
+        return Math.max(0.15f, (float)(ZOOM_AT_DEFAULT * Math.pow(ZOOM_STEP, s - 5)));
     }
 
     int frameCapFps() { return clampI(getStringInt(FRAME_CAP, 25), 10, 30); }
