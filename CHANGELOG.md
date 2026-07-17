@@ -2,6 +2,57 @@
 
 All notable changes to Nebula are documented here.
 
+## 4.11.0 — 2026-07-17
+
+A performance pass that funds a calmer, deeper sky. The showpiece galaxies
+stop costing what they never earned, and the reclaimed frame time goes into
+gas resolution — then the motion and brightness are retuned around it.
+
+### Performance
+- **Showpiece galaxies are gated on the CPU.** The rare-galaxy tier rejects
+  99.65% of cells with a single hash, so it looked free — but *reaching* that
+  rejection cost the coordinate math and the hash for every pixel on both star
+  layers, measured at 1.80 ms/frame. A once-per-frame CPU visibility test now
+  skips the whole layer unless a galaxy is actually in view. The gate answers
+  per-layer, not per-cell: once it opens the shader runs its normal per-pixel
+  hash and still finds every visible galaxy itself, so the drawn result is
+  unchanged. (The ablation harness overstated the win — it compiles the body
+  out and frees its registers too; a probe that shut the gate at runtime with
+  the body compiled in showed 1.80 ms of the 2.07 ms is execution a gate can
+  skip, and only 0.27 ms is register pressure it cannot.)
+- **The distant star stratum no longer twinkles.** Those stars are packed 1.6×
+  denser (sub-pixel) and dimmed, and the twinkle amplitude curve gave the
+  faintest stars the *most* motion — the layer paid the most for the least.
+  The near layers keep their full twinkle.
+- Net on the Shield: composite pass 16.1 → 13.5 ms at a fixed gas scale. Free-
+  running, the adaptive gas scale rises 0.43 → 0.44 with cadence unchanged —
+  the savings become gas resolution rather than frame rate.
+
+### Changed
+- **Zoom slider steps 20% per notch, over a narrower range.** The slider was
+  33.5% per notch spanning 0.42–5.66× (13.5×); it is now a flat 20% spanning
+  0.64–3.32× (5.2×), for finer adjustment. Still a geometric curve, now
+  anchored at the default so re-tuning the step can never move the default.
+  Note this re-maps stored slider values — a saved 10 was 5.66× and is 3.32×
+  now; fresh installs are unaffected.
+- **Default zoom speed raised** from slider 4 to 5 (1.335× on the new curve).
+- **Star zoom slowed 10%.** Every star-side element reads one rate constant —
+  the star layers, the band haze, the sky bake, and the flare/nova/galaxy
+  schedulers — so they slow together and stay in register.
+- **The gas camera is decoupled from the zoom setting.** The zoom pref drove
+  both the star zoom and the gas fly-through; the gas now rides its own factor
+  (0.729× of the zoom) so the clouds drift more slowly than the stars stream
+  past. Net, the gas sits a touch below its pre-4.11 speed while the stars run
+  faster.
+- **Distant stars brightened** (0.55 → 0.78×). They read far dimmer than the
+  multiplier suggested — denser packing shrinks them, sub-pixel anti-aliasing
+  clamps their energy, and they fell under the HDR star-boost knee that the
+  near layers clear.
+- **Galaxies dimmed** to 72% via a new master scale over both tiers, which
+  holds each tier's per-cell brightness spread and core/disk balance while
+  moving the pair together.
+- **Galaxy haze raised 10%.**
+
 ## 4.10.0 — 2026-07-16
 
 A structural fix to the nebula plus a rebuilt star population. The gas keeps
