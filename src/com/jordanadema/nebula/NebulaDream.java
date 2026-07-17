@@ -358,7 +358,16 @@ public class NebulaDream extends DreamService {
         // no warp divergence) so each is free during its ~20% off-window.
         private static final float FAR_STAR_SPEED = 0.45f; // fraction of near-star zoom speed
         private static final float FAR_STAR_DEN   = 1.6f;  // grid-density multiple (denser -> smaller, more numerous)
-        private static final float FAR_STAR_BRI   = 0.55f; // brightness multiple (distance -> fainter)
+        // Brightness multiple (distance -> fainter). 0.55 -> 0.78: the stratum
+        // read far dimmer than the 0.55 suggests, because the multiplier is not
+        // the only thing holding it down. FAR_STAR_DEN packs these stars 1.6x
+        // denser, so they are smaller, and starLayer's pixel-convolution AA
+        // then energy-clamps a sub-pixel star (pow(kEff/kCore,0.75)) — which
+        // bites hardest exactly on the smallest stars. On the HDR path the
+        // gap compounds again: the star boost only ramps in over
+        // smoothstep(0.10,0.90,starLum), so the near layers clear the knee and
+        // get boosted while the far stratum sits under it and does not.
+        private static final float FAR_STAR_BRI   = 0.78f;
         // Flat star-density for the distant stratum, replacing the two vn()
         // clustering-field lookups. Those run BEFORE the sparse-star early-out,
         // so ~76% of pixels pay for them whether or not a cell holds a star —
@@ -382,6 +391,12 @@ public class NebulaDream extends DreamService {
         // which must test the exact same threshold the shader does — if the two
         // disagree the gate can hide a galaxy the shader would have drawn.
         private static final float GAL_BIG_THRESH = 0.9965f;
+        // Master brightness over BOTH galaxy tiers. Each tier keeps its own
+        // per-cell brightness spread (small mix(0.55,1.05), big mix(0.50,0.85))
+        // and its own core/disk balance; this scales the pair together, so
+        // tuning it dims galaxies without disturbing either the spread or the
+        // small-vs-showpiece relationship. Same split-gain idea as BAND_BRI.
+        private static final float GAL_BRI = 0.72f;
 
         // Flare scheduling. Gaps walked 40-180s -> 24-104s -> 10-40s: placement
         // is verified on-screen (the rotation-aware picker), so the low visible
@@ -520,7 +535,8 @@ public class NebulaDream extends DreamService {
             "#define FAR_STAR_BRI "   + FAR_STAR_BRI   + "\n" +
             "#define FAR_STAR_DENS "  + FAR_STAR_DENS  + "\n" +
             "#define GAL_SMALL_THRESH " + GAL_SMALL_THRESH + "\n" +
-            "#define GAL_BIG_THRESH " + GAL_BIG_THRESH + "\n";
+            "#define GAL_BIG_THRESH " + GAL_BIG_THRESH + "\n" +
+            "#define GAL_BRI " + GAL_BRI + "\n";
 
         private static final String VERT_ES3 =
             "#version 300 es\n" +
@@ -1034,7 +1050,7 @@ public class NebulaDream extends DreamService {
             "  vec3 gcol=mix(vec3(0.72,0.80,1.00),vec3(1.00,0.90,0.78),gcore);\n" +
             // 1.5x overall vs the oval era: the deep inter-arm gaps and tight
             // nucleus halved the integrated light and sank them below visibility.
-            "  return gcol*(gcore+gdisk*lane)*mix(0.55,1.05,h1(cell+17.9));\n" +
+            "  return gcol*(gcore+gdisk*lane)*mix(0.55,1.05,h1(cell+17.9))*GAL_BRI;\n" +
             "}\n" +
             // Showpiece tier: a far coarser grid (cells ~3x the galaxy grid's, so
             // a big smudge fits without clipping) where a very rare cell holds a
@@ -1072,7 +1088,7 @@ public class NebulaDream extends DreamService {
             "  float gdisk=exp(-gr*1.35)*0.85;\n" +
             "  float lane=1.0-0.72*exp(-grot.y*grot.y*14.0)*smoothstep(0.35,0.80,gr)*(1.0-smoothstep(1.8,2.6,gr));\n" +
             "  vec3 gcol=mix(vec3(0.70,0.78,1.00),vec3(1.00,0.88,0.74),gcore);\n" +
-            "  return gcol*(gcore*0.95+gdisk*lane)*mix(0.50,0.85,h1(cell+17.9));\n" +
+            "  return gcol*(gcore*0.95+gdisk*lane)*mix(0.50,0.85,h1(cell+17.9))*GAL_BRI;\n" +
             "}\n" +
             "vec3 sprinkleLayer(vec2 uv,float den,float ox,float oy,float dens){\n" +
             "  float thresh=0.97-dens*0.97;\n" +
