@@ -179,7 +179,13 @@ public class NebulaDream extends DreamService {
         private static final float STAR_REF_WIDTH = 1920.0f;
         private static final float STAR_REF_DPI = 320.0f; // Shield's density: dpiBoost = 1 there
         private static final float STAR_SCALE_MIN = 0.30f;
-        private static final float SZ_SPEED    = 0.0120f;
+        // Star-zoom rate. 0.0120 -> 0.0108 (-10%). Every consumer reads this
+        // one constant — the star layers, the gas pass's haze (which rides the
+        // star grid), the sky bake, and the CPU-side galaxy/flare/nova
+        // schedulers — so they all slow together and stay in register. The gas
+        // camera does NOT read it (it rides uZoom*GAS_SPEED), so this slows the
+        // starfield without touching the clouds.
+        private static final float SZ_SPEED    = 0.0108f;
         private static final float SZ_MAX      = 0.75f;
         // Gas-camera speed relative to the zoom setting. The zoom pref drives
         // BOTH the star zoom and the gas fly-through, so the gas inherited every
@@ -187,8 +193,9 @@ public class NebulaDream extends DreamService {
         // more slowly than the stars stream past. Walked 1.0 -> 0.90 -> 0.81
         // -> 0.729 (three successive 10% trims), which almost exactly cancels
         // the zoom default going 4 -> 5: 1.335 * 0.729 = 0.973, so the gas now
-        // drifts a touch slower than it did before that change, while the
-        // stars keep the full 1.335. Applies ONLY to the gas camera (ro) —
+        // drifts a touch slower than it did before that change, while the stars
+        // keep the full 1.335 zoom multiplier (their own rate is trimmed
+        // separately by SZ_SPEED above). Applies ONLY to the gas camera (ro) —
         // the gas pass's haze layer also reads uZoom, but that rides the star
         // grid and must stay in register with the composite pass's stars, so it
         // deliberately does not get this factor.
