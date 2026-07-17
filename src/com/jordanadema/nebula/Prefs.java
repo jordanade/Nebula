@@ -38,8 +38,12 @@ final class Prefs {
 
     float renderScale() { return clampF(getIntPref(RENDER_SCALE, 40) / 100f, 0.10f, 1.0f); }
 
+    // Slider 1..10; 4 is the neutral point where zoomMul is exactly 1.0, and
+    // the curve stays anchored there so the stored value keeps its meaning.
+    // Only the DEFAULT moves to 5 (zoomMul ~1.335) — must match the
+    // android:defaultValue in res/xml/prefs.xml.
     float zoomMul() {
-        int s = getIntPref(ZOOM_SPEED, 4);
+        int s = getIntPref(ZOOM_SPEED, 5);
         return Math.max(0.15f, (float)Math.pow(2.0, (s - 4) / 2.4));
     }
 

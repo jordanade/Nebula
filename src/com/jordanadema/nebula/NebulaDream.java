@@ -53,7 +53,12 @@ public class NebulaDream extends DreamService {
         } catch (NumberFormatException e) {
             Log.w(TAG, "bad nebula_gaspin", e);
         }
-        Log.i(TAG, "ablate=" + (ablate == null ? "(none)" : ablate) + " gasPin=" + gasPin);
+        // zoomMul is a curve over the 1-10 slider (2^((s-4)/2.4)), so log the
+        // resolved multiplier: the stored slider value alone does not tell you
+        // what the scene is actually doing.
+        Log.i(TAG, "ablate=" + (ablate == null ? "(none)" : ablate) + " gasPin=" + gasPin
+            + " zoomMul=" + String.format("%.3f", prefs.zoomMul())
+            + " gasSpeed=" + String.format("%.3f", prefs.zoomMul() * NebulaRenderer.GAS_SPEED));
         boolean wantHdr = !Prefs.HDR_OFF.equals(prefs.hdrMode());
 
         // Drive the panel for maximum highlight luminance: full screen
@@ -176,6 +181,18 @@ public class NebulaDream extends DreamService {
         private static final float STAR_SCALE_MIN = 0.30f;
         private static final float SZ_SPEED    = 0.0120f;
         private static final float SZ_MAX      = 0.75f;
+        // Gas-camera speed relative to the zoom setting. The zoom pref drives
+        // BOTH the star zoom and the gas fly-through, so the gas inherited every
+        // change to it; this detunes the gas alone, letting the clouds drift
+        // more slowly than the stars stream past. Walked 1.0 -> 0.90 -> 0.81
+        // -> 0.729 (three successive 10% trims), which almost exactly cancels
+        // the zoom default going 4 -> 5: 1.335 * 0.729 = 0.973, so the gas now
+        // drifts a touch slower than it did before that change, while the
+        // stars keep the full 1.335. Applies ONLY to the gas camera (ro) —
+        // the gas pass's haze layer also reads uZoom, but that rides the star
+        // grid and must stay in register with the composite pass's stars, so it
+        // deliberately does not get this factor.
+        static final float GAS_SPEED = 0.729f;
         private static final float L0_OX = 0.0f,  L0_OY = 0.0f;
         private static final float L1_OX = 0.37f, L1_OY = 0.21f;
         private static final float L0_PHASE = 0.0f, L1_PHASE = 0.5f;
@@ -464,6 +481,7 @@ public class NebulaDream extends DreamService {
         private static final String GAS_DEFS =
             "#define SZ_SPEED "  + SZ_SPEED  + "\n" +
             "#define SZ_MAX "    + SZ_MAX    + "\n" +
+            "#define GAS_SPEED " + GAS_SPEED + "\n" +
             "#define STAR_DEN "  + STAR_DEN  + "\n" +
             "#define L0_OX "     + L0_OX     + "\n" +
             "#define L0_OY "     + L0_OY     + "\n" +
@@ -640,7 +658,9 @@ public class NebulaDream extends DreamService {
             "float hg(float c,float g){ float g2=g*g; return (1.0-g2)/pow(max(1.0+g2-2.0*g*c,1e-3),1.5); }\n" +
             "void main(){\n" +
             "  vec2 uv=vUv*2.0-1.0; uv.x*=uRes.x/uRes.y;\n" +
-            "  vec3 ro=vec3(sin(uTime*0.05*uZoom)*0.7+sin(uTime*0.0171*uZoom)*0.45+uSeed.x*50.0,cos(uTime*0.037*uZoom)*0.5+cos(uTime*0.0123*uZoom)*0.35+uSeed.y*50.0,uTime*0.40*uZoom+uSeed.x*37.0);\n" + // fly forward + gentle drift (off-axis)
+            // Gas camera rides GAS_SPEED, not uZoom directly — see GAS_SPEED.
+            "  float gz=uZoom*GAS_SPEED;\n" +
+            "  vec3 ro=vec3(sin(uTime*0.05*gz)*0.7+sin(uTime*0.0171*gz)*0.45+uSeed.x*50.0,cos(uTime*0.037*gz)*0.5+cos(uTime*0.0123*gz)*0.35+uSeed.y*50.0,uTime*0.40*gz+uSeed.x*37.0);\n" + // fly forward + gentle drift (off-axis)
             "  vec3 rd=normalize(vec3(uv,1.5));\n" +
             "  vec3 ldir=normalize(vec3(0.55,0.5,-0.35));\n" +
             // nebula colour: v3.1's purple-centred 4-stop palette, driven by a

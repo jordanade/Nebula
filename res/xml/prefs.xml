@@ -42,7 +42,7 @@
             android:key="zoom_speed"
             android:title="@string/pref_zoom_title"
             android:dialogTitle="@string/pref_zoom_title"
-            android:defaultValue="4"
+            android:defaultValue="5"
             app:sliderMin="1"
             app:sliderMax="10"
             app:sliderStep="1"
