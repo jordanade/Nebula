@@ -272,6 +272,17 @@ public class NebulaDream extends DreamService {
         private static final float ERO2_BITE = 0.30f;
         private static final float ERO_HI    = 0.60f;
 
+        // Coverage gate. A low-frequency (p*0.022) noise field, thresholded to
+        // decide WHERE cloud masses exist at all — below COV_LO is hard empty
+        // space. This is the "how often does a nebula appear" lever, and it sits
+        // UPSTREAM of all erosion, so widening it costs no interior texture (that
+        // is ERO_HI's job). The original 0.26/0.68 read too sparse — many frames
+        // came up bare starfield. Lowered to 0.18/0.60: masses appear more often
+        // and grow larger, erosion/texture untouched. Raise COV_LO back toward
+        // 0.26 for sparser, more isolated clouds; lower it for a fuller sky.
+        private static final float COV_LO = 0.18f;
+        private static final float COV_HI = 0.60f;
+
         // Galaxy haze. 0.22 -> 0.242 (+10%).
         private static final float HAZE_MUL    = 0.242f;
 
@@ -304,7 +315,17 @@ public class NebulaDream extends DreamService {
         // over dark space, not one glow. FLOOR = how far the dimmest gas is pushed
         // down; KNEE = accumulated luminance at which gas returns to full
         // strength. Peaks are never boosted — average field brightness drops too.
-        private static final float GAS_CONTRAST_FLOOR = 0.42f;
+        // FLOOR 0.42 -> 0.55: the wash-suppression campaign (ceiling cuts, ERO_HI
+        // thinning, this curve) overshot — the low-mid body sank too dark. This
+        // lifts it; gas at/above KNEE mixes to 1.0 and is untouched, so the bright
+        // masses keep their level and the mass-over-dark-space reading survives.
+        //
+        // Held at 0.55 rather than 0.72 because the real presence fix is now the
+        // COV_LO coverage widening (more masses on screen), not brightness. With
+        // more low-mid gas actually present, a high floor risks merging it into
+        // one continuous glow — the wash returning. Tune this and COV_LO together:
+        // if the sky reads busy/washed, drop FLOOR before touching coverage.
+        private static final float GAS_CONTRAST_FLOOR = 0.55f;
         private static final float GAS_CONTRAST_KNEE  = 0.85f;
         // Star-forming core carve-out (light approximation): cores are the
         // brightest gas, so a mask keyed on the PURE gas peak (gas.rgb, before
@@ -507,6 +528,8 @@ public class NebulaDream extends DreamService {
             "#define ERO_BITE "  + ERO_BITE  + "\n" +
             "#define ERO2_BITE " + ERO2_BITE + "\n" +
             "#define ERO_HI "    + ERO_HI    + "\n" +
+            "#define COV_LO "    + COV_LO    + "\n" +
+            "#define COV_HI "    + COV_HI    + "\n" +
             "#define CORE_GAIN "  + CORE_GAIN  + "\n" +
             "#define GAS_CONTRAST_FLOOR " + GAS_CONTRAST_FLOOR + "\n" +
             "#define GAS_CONTRAST_KNEE "  + GAS_CONTRAST_KNEE  + "\n";
@@ -622,7 +645,7 @@ public class NebulaDream extends DreamService {
             "  float base=texture(uNoise,p*0.062).r;\n" +             // larger billow base
             // Coverage: low-frequency gate makes fewer, larger cloud masses while
             // still rejecting the weakest saddles between them.
-            "  float cov=smoothstep(0.26,0.68,texture(uNoise,p*0.022+0.31).r);\n" +
+            "  float cov=smoothstep(COV_LO,COV_HI,texture(uNoise,p*0.022+0.31).r);\n" +
             "  float d=rm(base,1.0-cov,1.0)*cov;\n" +
             "  float ero=texture(uNoise,p*0.22).g;\n" +              // broad Worley erosion
             "  d=rm(d,ero*ERO_BITE,1.0);\n" +
@@ -641,7 +664,7 @@ public class NebulaDream extends DreamService {
             // sub-pixel detail aliases into shimmer at this range.
             "float densMid(vec3 p){\n" +
             "  float base=texture(uNoise,p*0.062).r;\n" +
-            "  float cov=smoothstep(0.26,0.68,texture(uNoise,p*0.022+0.31).r);\n" +
+            "  float cov=smoothstep(COV_LO,COV_HI,texture(uNoise,p*0.022+0.31).r);\n" +
             "  float d=rm(base,1.0-cov,1.0)*cov;\n" +
             "  float ero=texture(uNoise,p*0.22).g;\n" +
             "  d=rm(d,ero*ERO_BITE,1.0);\n" +
@@ -656,7 +679,7 @@ public class NebulaDream extends DreamService {
             // the texture cache with the full 4-fetch dens().
             "float densFar(vec3 p){\n" +
             "  float base=texture(uNoise,p*0.062).r;\n" +
-            "  float cov=smoothstep(0.26,0.68,texture(uNoise,p*0.022+0.31).r);\n" +
+            "  float cov=smoothstep(COV_LO,COV_HI,texture(uNoise,p*0.022+0.31).r);\n" +
             "  float d=rm(base,1.0-cov,1.0)*cov;\n" +
             "  d=rm(d,0.18,1.0);\n" +                                // approximate the erosion's average bite
             "  return pow(d,1.8)*0.9;\n" +
@@ -700,11 +723,28 @@ public class NebulaDream extends DreamService {
             // this gives the dust layer one readable silhouette and one matching rim.
             "  vec2 frontDrift=vec2(sin(uTime*0.031),cos(uTime*0.027))*0.55;\n" +
             "  vec3 fp=ro+rd*7.5+vec3(frontDrift,0.0);\n" +
+            "  float frontCoarse=texture(uNoise,fp*0.031+vec3(1.1,7.7,uTime*0.0035)).r-0.5;\n" +   // large-scale world-space meander: unlocks the band from screen space
             "  float frontNoise=texture(uNoise,fp*0.050+vec3(2.7,5.1,uTime*0.004)).r-0.5;\n" +
             "  float frontDetailNoise=texture(uNoise,fp*0.115+vec3(8.4,2.2,uTime*0.006)).r-0.5;\n" +
             "  float frontBreak=smoothstep(0.30,0.76,texture(uNoise,fp*0.085+vec3(4.8,8.2,uTime*0.005)).r);\n" +
-            "  float front=uv.y+0.20*uv.x+0.18*sin((uv.x+frontDrift.x*0.12)*2.25+0.7+frontDrift.y*0.18)+frontNoise*0.32+frontDetailNoise*0.18+0.02;\n" +
-            "  float frontHalo=exp(-front*front*18.0)*smoothstep(-0.16,0.20,front);\n" +
+            // Band centreline. A single screen-locked sine read as too smooth and
+            // predictable; the shape is now THREE incommensurate harmonics (2.25 /
+            // 5.10 / 8.70 — non-integer ratios, so the composite never repeats),
+            // each with its own drift, plus a large-scale world-space noise meander
+            // (frontCoarse) so the band's placement evolves as the camera flies
+            // rather than sitting screen-locked. frontDetailNoise weight up
+            // (0.18->0.24) roughens the gaussian edge. Still ONE readable front —
+            // just an organic one. Amplitudes taper 0.15/0.095/0.05 so the coarse
+            // arc still dominates and the higher terms only break its regularity.
+            "  float fWarp=0.15*sin((uv.x+frontDrift.x*0.12)*2.25+0.7+frontDrift.y*0.18)\n" +
+            "             +0.095*sin((uv.x-frontDrift.y*0.18)*5.10+2.3+frontDrift.x*0.31)\n" +
+            "             +0.05*sin((uv.x+frontDrift.x*0.27)*8.70+1.1-frontDrift.y*0.40);\n" +
+            "  float front=uv.y+0.20*uv.x+fWarp+frontCoarse*0.26+frontNoise*0.30+frontDetailNoise*0.24+0.02;\n" +
+            // Band width. Gaussian falloff 18->9 (~1.4x wider) plus a wider one-sided
+            // gate (-0.16/0.20 -> -0.22/0.18): the band read too thin/ribbon-like.
+            // Free — just constants. The asymmetric gate is kept (bright edge on the
+            // positive side, the ionization-front look), only broadened.
+            "  float frontHalo=exp(-front*front*9.0)*smoothstep(-0.22,0.18,front);\n" +
             // ── NEBULA shading: highly-transparent EMISSIVE gas. No light march,
             // no phase — the gas GLOWS (emission nebula), it is not sunlit cloud.
             // Very low extinction: rays cross whole masses; stars shine through.
@@ -762,9 +802,16 @@ public class NebulaDream extends DreamService {
             // (density jumping from ~nothing to substantial between samples).
             "        float rim=smoothstep(0.015,0.16,d-dPrev)*clamp(1.0-dPrev*6.0,0.0,1.0);\n" +
             "        emit+=mix(tcol,vec3(1.0,0.62,0.92),0.35)*rim*1.15*nearAmt;\n" +
-            "        float frontGrain=0.42+0.82*frontDetail;\n" +
+            // Carve texture INTO the band so it reads as mottled gas, not a solid
+            // ribbon. Two scales, both from already-fetched noise (perf-free):
+            // frontDetail (per-sample, fine grain) with a low floor (0.42->0.10) so
+            // thin patches carve down to near-holes, times frontBreak (per-pixel,
+            // large-scale) so whole stretches of the band fade out. Gain 0.35->0.26
+            // offsets the wider gaussian's extra area — net a broad, textured, dimmer
+            // band rather than a thin bright arc.
+            "        float frontGrain=(0.10+1.0*frontDetail)*mix(0.50,1.0,frontBreak);\n" +
             "        float shell=smoothstep(0.018,0.10,d)*(1.0-smoothstep(0.22,0.48,d));\n" +
-            "        emit+=mix(tcol,vec3(1.0,0.48,0.90),0.30)*frontHalo*(d*0.20+shell*0.68)*frontGrain*0.35*nearAmt;\n" +
+            "        emit+=mix(tcol,vec3(1.0,0.48,0.90),0.30)*frontHalo*(d*0.20+shell*0.68)*frontGrain*0.26*nearAmt;\n" +
             "      }\n" +
             "#endif\n" +
             // STAR-FORMING CORE: the densest hearts glow white-pink. Gated by a

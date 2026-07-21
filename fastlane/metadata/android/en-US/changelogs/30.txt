@@ -1,0 +1,7 @@
+More nebula, smoother performance:
+
+• Nebulas fill the frame more often instead of drifting to bare starfield, and their faint outer gas reads instead of fading to black
+• The bright edge that defines a nebula mass is wider, more textured, and less regularly shaped — mottled gas rather than a thin bright ribbon
+• Showpiece galaxies are skipped entirely when none is in view, and the distant star layer stops twinkling — the reclaimed frame time goes into gas resolution
+• Finer zoom slider (20% per notch) with a slightly faster default; the gas now drifts more slowly than the stars stream past
+• Brighter distant stars, gently dimmed galaxies, and a touch more galaxy haze

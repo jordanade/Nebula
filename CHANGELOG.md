@@ -2,11 +2,15 @@
 
 All notable changes to Nebula are documented here.
 
-## 4.11.0 — 2026-07-17
+## 4.11.0 — 2026-07-20
 
-A performance pass that funds a calmer, deeper sky. The showpiece galaxies
-stop costing what they never earned, and the reclaimed frame time goes into
-gas resolution — then the motion and brightness are retuned around it.
+A performance pass that funds a calmer, deeper sky, then a nebula-appearance
+pass on top. The showpiece galaxies stop costing what they never earned, and
+the reclaimed frame time goes into gas resolution — then the motion and
+brightness are retuned around it. Finally the gas itself gets more present: it
+fills the frame more often, its faint body reads instead of sinking to black,
+and the bright front that defines a mass is widened, textured, and made less
+regular.
 
 ### Performance
 - **Showpiece galaxies are gated on the CPU.** The rare-galaxy tier rejects
@@ -52,6 +56,33 @@ gas resolution — then the motion and brightness are retuned around it.
   holds each tier's per-cell brightness spread and core/disk balance while
   moving the pair together.
 - **Galaxy haze raised 10%.**
+
+### Nebula appearance
+- **Gas fills the frame more often.** A run of earlier passes (interior-texture
+  restoration, the HDR-ceiling cuts, the wash-suppression curve) all thinned or
+  dimmed the *existing* masses without touching how often one is in view, so the
+  sky drifted toward bare starfield. The low-frequency coverage gate — which
+  decides where cloud masses exist at all, upstream of all erosion — is now a
+  named constant and widened (threshold 0.26→0.18), so nebulae appear more often
+  and larger. Interior texture is untouched: this is a separate lever from the
+  erosion that carves it.
+- **The faint gas body reads again.** The emission-contrast floor is raised
+  (0.42→0.55): the dim-to-mid gas that the wash-suppression curve pushed toward
+  black now returns to visible without brightening the dense hearts (gas at or
+  above the contrast knee is unchanged), so the mass-over-dark-space reading
+  survives.
+- **The bright front is less predictable.** The curve that defines a mass's lit
+  edge was a single screen-locked sine — one clean frequency that only drifted.
+  It is now three incommensurate harmonics (2.25 / 5.10 / 8.70, non-integer
+  ratios so the composite never repeats) plus a large-scale world-space noise
+  meander, so the front evolves as the camera flies rather than sitting
+  screen-locked.
+- **That front is wider, textured, and dimmer.** It read as a thin bright
+  ribbon; the Gaussian falloff is widened ~1.4× and the gate broadened. Texture
+  is carved into it at two scales — a low grain floor lets thin patches drop to
+  near-holes, times a large-scale break — so it reads as mottled gas, not a
+  solid ribbon. Its gain is cut to offset the wider area. No new texture fetches:
+  both noise sources were already sampled, so this is perf-neutral.
 
 ## 4.10.0 — 2026-07-16
 
