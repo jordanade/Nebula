@@ -2,6 +2,21 @@
 
 All notable changes to Nebula are documented here.
 
+## 4.11.1 — 2026-07-22
+
+A small tone pass on the SDR (non-HDR) output path. The shared Reinhard +
+0.92-gamma tonemap left the faint gas floor as a slightly lifted grey on 8-bit
+panels; the SDR branch now applies a small black-point lift (`SDR_BLACK`) that
+pulls that floor to true black, plus a gentle S-curve (`SDR_CONTRAST`) that
+steepens the midtones so gas masses separate. Both act only in the `uHdr < 0.5`
+branch of the composite pass — the HDR path is byte-for-byte unchanged.
+
+### Appearance (SDR only)
+- **Deeper blacks.** `SDR_BLACK = 0.01` crushes the near-black floor to 0 and
+  re-expands the rest, removing the milky lift on standard-range displays.
+- **Slightly more contrast.** `SDR_CONTRAST = 1.04` adds a mild midtone S-curve
+  around mid-grey, giving the gas a touch more shape without pushing it.
+
 ## 4.11.0 — 2026-07-20
 
 A performance pass that funds a calmer, deeper sky, then a nebula-appearance

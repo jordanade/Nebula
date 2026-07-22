@@ -348,6 +348,13 @@ public class NebulaDream extends DreamService {
         // gas. Set CEIL>GAS_HDR_CEIL and DESAT_KEEP>0 to re-enable.
         private static final float CORE_HDR_CEIL  = GAS_HDR_CEIL;
         private static final float CORE_DESAT_KEEP = 0.0f;
+        // SDR-only grade (else branch of the comp tonemap; HDR path untouched).
+        // The shared Reinhard+0.92-gamma lifts the toe, which reads as a raised,
+        // milky floor on an 8-bit panel. SDR_BLACK crushes that faint floor to
+        // true 0 (deeper blacks); SDR_CONTRAST steepens the midtones around
+        // mid-gray so gas masses separate. Dither is re-applied after the grade.
+        private static final float SDR_BLACK = 0.01f;
+        private static final float SDR_CONTRAST = 1.04f;
         // Star HDR ramp scale. The star boost curve saturates almost as soon as a
         // star clears the knee: measured on the Shield (starGain 13.67, starMax
         // 8.44), stars at linear 3/4/6/8 all landed at boost 7.20/7.40/7.44/7.44
@@ -573,6 +580,8 @@ public class NebulaDream extends DreamService {
             "#define CORE_HDR_HI "    + CORE_HDR_HI    + "\n" +
             "#define CORE_HDR_CEIL "  + CORE_HDR_CEIL  + "\n" +
             "#define CORE_DESAT_KEEP " + CORE_DESAT_KEEP + "\n" +
+            "#define SDR_BLACK " + SDR_BLACK + "\n" +
+            "#define SDR_CONTRAST " + SDR_CONTRAST + "\n" +
             "#define STAR_HDR_GAIN " + STAR_HDR_GAIN + "\n" +
             "#define FLARE_STEADY " + FLARE_STEADY + "\n" +
             "#define SPIKE_THRESH " + SPIKE_THRESH + "\n" +
@@ -1477,6 +1486,11 @@ public class NebulaDream extends DreamService {
             "    }\n" +
             "    fragColor=vec4(max(hdr,vec3(0.0)),1.0);\n" +
             "  } else {\n" +
+            // Deepen blacks: pull the faint floor to true 0, re-expand the rest.
+            "    base=max(base-SDR_BLACK,vec3(0.0))/(1.0-SDR_BLACK);\n" +
+            // Contrast: steepen midtones around mid-gray.
+            "    base=clamp((base-0.5)*SDR_CONTRAST+0.5,0.0,1.0);\n" +
+            // Dither AFTER the grade so it still breaks banding at the new toe.
             "    base+=(h1(gl_FragCoord.xy)-0.5)/255.0*bk;\n" +
             "    fragColor=vec4(clamp(base,0.0,1.0),1.0);\n" +
             "  }\n" +

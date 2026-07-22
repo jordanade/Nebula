@@ -1,0 +1,4 @@
+Deeper blacks on standard (non-HDR) displays:
+
+• On SDR screens the faint floor now settles to true black instead of a slightly lifted grey, with a light contrast lift so gas masses separate more cleanly
+• HDR output is unchanged
