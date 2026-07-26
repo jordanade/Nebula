@@ -2,6 +2,100 @@
 
 All notable changes to Nebula are documented here.
 
+## 4.12.0 — 2026-07-26
+
+A pass on what the gas is *shaped* like and where the camera *goes*, driven by
+measuring eleven captures of 4.11.1 rather than looking at them. Two numbers
+decided the work: only 0.004–0.008% of each frame sat above 60% grey (and under
+0.3% above 30%), so the entire luminance hierarchy was star carpet, then nothing,
+then occasionally one flare — no frame had a bright *area*, only bright *points*.
+And the share of the frame carrying any gas swung 25% → 96%, so it was coverage
+*variance*, not coverage, that left frames with no subject. Both point the same
+way: the problem was never gain. Every element of the nebula was additive, and
+the flight was blind.
+
+### Added
+
+- **Dust lanes.** A gaussian trough on the low end of the inverted-Worley
+  channel — the web of cell boundaries, which is a connected network of thin
+  sheets, the topology real dust lanes have. Free: it reads the G channel of a
+  fetch the march already makes. Emission is suppressed at every depth so mid and
+  far masses gain dark veining, while extinction applies only in the near field —
+  integrated over the full 40-unit march an ungated lane term reaches an optical
+  depth of ~0.77, roughly 2.4× the gas's own, which is global fog rather than
+  dust.
+- **Silhouette dust.** The macro dust forms never reached opacity and never cut an
+  edge, so they read as haze rather than as a shape. They now take a Worley bite
+  from the same fetch for a cauliflower edge, on a tighter ramp, with cubed
+  occlusion and 2.2× extinction — so the gain lands on the cores, which black out
+  the stars behind them, while the edges stay sheer.
+- **Reflection nebulosity.** `starSig = T*bg` meant a star was only ever
+  *occluded* by the gas and never lit it — two independent worlds stacked. The top
+  ~1% of stars by magnitude now throw a blue-white halo gated on local column
+  opacity, so it exists only where there is cloud to scatter it. Blue because
+  scattering is wavelength-dependent, which also puts a colour on screen that the
+  four-stop emission palette cannot reach. Flares and novas scatter into their
+  surrounding cloud on the same term.
+- **Filamentary anisotropy.** Every density fetch sampled the volume with a
+  uniform scale on all three axes, so the field had no preferred direction at any
+  octave — which is exactly why the gas read as cauliflower. Compressing the
+  lookup coordinate along one axis elongates the sampled features along it: masses
+  become streamers and sheets for one dot product and no extra fetch. The axis is
+  frame-uniform and derived on the CPU from a very-low-frequency read of the noise
+  at the camera, so filament direction changes as the camera crosses field domains
+  instead of reading as a fixed comb.
+- **Steered camera.** Java generated the noise, so Java can evaluate it: the CPU
+  trilinear-samples the same 64³ buffer the GPU marches, scores a look-ahead fan
+  of candidate lateral offsets weighted by the marcher's own distance falloff, and
+  biases the camera toward the best. It steers only when the current path scores
+  poorly, so it acts as a *floor* on scene richness rather than a target — always
+  seeking maximum density would trade bare starfield for the flat full-frame wash
+  the emission-contrast curve exists to suppress. Two cascaded lags keep the
+  correction smooth in velocity as well as position.
+- **Staggered arrival, and an arrival flight.** One fade over the whole frame
+  dissolved up the finished image. Stars now come up over ~3 s and the gas blooms
+  in behind them over ~12 s, and the camera starts 8 units behind its nominal path
+  and closes the gap over 20 s, so masses ahead *grow* rather than brightening in
+  place. The delayed gas start yields a few seconds of nothing but the pin-sharp
+  star field.
+
+### Changed
+
+- **Extinction is no longer uniformly near-transparent.** The gas itself still is,
+  so stars shine through whole masses, but dust cores and lane crossings now reach
+  real occlusion — and where they do the ray hits the early-out sooner, which
+  partly funds them.
+- The 3D noise generator logs percentile summaries of both channels at startup.
+  Any threshold tuned against these fields without their distribution in hand is a
+  guess, and that guess cost this release two iterations: both channels sit at
+  p05=0.28 / p50=0.47 / p95=0.66, so a "narrow" trough in value space is a large
+  fraction of the whole volume.
+
+### Performance
+
+- Net +0.52 ms/frame against 4.11.1, measured with the ablation harness pinning
+  seed, event RNG and gas FBO scale over 20 paired windows (gas +0.18, comp +0.34
+  — the comp figure is not resolvable at this noise floor, where scene variation
+  swings ±2.5 ms window to window). Free-running, the Shield holds the 25 fps cap.
+- The baked sky layer was fetched twice per composite pixel, once inside a branch
+  (which also made it an implicit-LOD fetch in non-uniform control flow); it is now
+  fetched once, and the previous epoch's bake is only fetched during its ~4 s
+  dissolve instead of every frame.
+- Reflection sources are picked on the CPU and passed as uniforms rather than
+  summed per pixel over a cell neighbourhood, which is both cheaper and removes
+  the failure mode entirely: a fixed neighbourhood means the contributing set
+  changes discontinuously across a cell boundary, tiling the sky with hard
+  rectangles wherever the kernel still has amplitude at its edge.
+
+### Docs
+
+- README documents the above, and four stale facts are corrected against the
+  source: the default nebula resolution cap is 40% (not 45%), the noise texture is
+  RG8 (not RGBA), neither galaxy tier has had arm modulation since the term was
+  dropped, and flares fire every ~15–50 s (not "every minute or three"). The nova,
+  the showpiece galaxy tier, the distant star stratum, the band's rift and bulge,
+  and the baked sky layer are documented for the first time.
+
 ## 4.11.1 — 2026-07-22
 
 A small tone pass on the SDR (non-HDR) output path. The shared Reinhard +
