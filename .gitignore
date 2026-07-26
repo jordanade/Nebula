@@ -15,3 +15,7 @@ APPEARANCE-IDEAS.md
 RELEASING.md
 docs/nebula-shape-ideas.md
 docs/raymarch-scope.md
+
+# Local release tooling — never published (holds/reads the signing password)
+release.sh
+.env
