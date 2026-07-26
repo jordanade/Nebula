@@ -364,6 +364,30 @@ Verified on an identical scene via the new `ABL_NO_FIL` guard: the
 isotropic build's rounded lump becomes a diagonal streamer with a defined
 ridge and directional grain, with dark space preserved either side.
 
+## Also shipped 2026-07-26: staggered arrival
+
+One `smoothstep(0,10,uTime)` scaled the entire frame, so a session opened
+by dissolving up the finished image. Stars now arrive over ~3s and the gas
+blooms in behind them from 2s to 14s, which makes the sky arrive in the
+order a sky should: points of light first, then the cloud they sit in.
+`col` already holds gas + starSig at that point, so subtracting starSig
+recovers the gas half exactly, and since both already carry the hue drift
+the split stays drift-correct.
+
+The gas start is DELAYED, not merely slowed — with both ramps starting at
+0 they overlap enough early on that the stagger is not legible. The
+by-product is the nicest part: a ~3s window of nothing but the pin-sharp
+star field, which no build has ever shown before, and a flare firing
+during it has the whole frame to itself.
+
+Note the band's resolved sprinkles/carpet ride the STAR fade (they are in
+bg) while the smooth band glow rides the gas fade — correct, but it does
+mean the band's grain arrives before its glow.
+
+Only witnessed on a manual start, or when the dream begins with someone in
+the room; the real payoff is the on-device Preview button, i.e. first
+impressions.
+
 ## Still open, ranked by payoff-per-effort
 
 1. **One resolved landmark.** Frames without a flare still have nowhere
@@ -372,17 +396,14 @@ ridge and directional grain, with dark space preserved either side.
    cluster (a few hot blue stars with reflection nebulosity, which now
    exists) on the galaxyBig CPU-gate pattern, so it costs nothing when
    absent.
-2. **Stagger the arrival.** One 10s `fadeIn` currently ramps everything
-   together. Stars up over ~3s and gas blooming in behind them over ~12s
-   would make the sky *develop* rather than dissolve in.
-3. **Let it know what time it is.** Nothing reads the wall clock. Biasing
+2. **Let it know what time it is.** Nothing reads the wall clock. Biasing
    `tempBias` by hour — deep blue-violet after midnight, warmer in the
    evening — is invisible in any one session and quietly uncanny across
    many.
-4. **Binaries.** 1-2% of bright stars get a close companion with a
+3. **Binaries.** 1-2% of bright stars get a close companion with a
    contrasting blackbody colour. Albireo is the best thing in a small
    telescope, and it rewards anyone who walks up to the panel.
-5. **Live nebula behind the settings screen.** `SettingsActivity` is a
+4. **Live nebula behind the settings screen.** `SettingsActivity` is a
    bare `PreferenceFragment`; the renderer behind a translucent list
    would make the zoom and resolution sliders preview themselves.
 

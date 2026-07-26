@@ -593,6 +593,21 @@ public class NebulaDream extends DreamService {
         // milky floor on an 8-bit panel. SDR_BLACK crushes that faint floor to
         // true 0 (deeper blacks); SDR_CONTRAST steepens the midtones around
         // mid-gray so gas masses separate. Dither is re-applied after the grade.
+        // ── Arrival ──────────────────────────────────────────────────────
+        // A single smoothstep(0,10) over the whole frame ramped stars and gas
+        // together, so a session opened by dissolving up the finished image.
+        // Staggering them makes the sky arrive in the order a sky should: points
+        // of light first, then the cloud they sit in. The gas start is delayed
+        // slightly rather than merely slower — without the delay the two ramps
+        // overlap enough at the start that the stagger is not legible.
+        //
+        // Worth noting these are only witnessed on a manual start or when the
+        // dream begins with someone in the room; the payoff is mostly first
+        // impressions (the on-device Preview button).
+        private static final float ARRIVE_STAR   = 3.0f;
+        private static final float ARRIVE_GAS_LO = 2.0f;
+        private static final float ARRIVE_GAS_HI = 14.0f;
+
         private static final float SDR_BLACK = 0.01f;
         private static final float SDR_CONTRAST = 1.04f;
         // Star HDR ramp scale. The star boost curve saturates almost as soon as a
@@ -840,6 +855,9 @@ public class NebulaDream extends DreamService {
             "#define CORE_HDR_HI "    + CORE_HDR_HI    + "\n" +
             "#define CORE_HDR_CEIL "  + CORE_HDR_CEIL  + "\n" +
             "#define CORE_DESAT_KEEP " + CORE_DESAT_KEEP + "\n" +
+            "#define ARRIVE_STAR "   + ARRIVE_STAR   + "\n" +
+            "#define ARRIVE_GAS_LO " + ARRIVE_GAS_LO + "\n" +
+            "#define ARRIVE_GAS_HI " + ARRIVE_GAS_HI + "\n" +
             "#define SDR_BLACK " + SDR_BLACK + "\n" +
             "#define SDR_CONTRAST " + SDR_CONTRAST + "\n" +
             "#define STAR_HDR_GAIN " + STAR_HDR_GAIN + "\n" +
@@ -1801,11 +1819,18 @@ public class NebulaDream extends DreamService {
             // ── v3.1 output chain: hue drift, fade-in, desat rolloff, tonemap, HDR ─
             "  float drift=uTime*0.0035;\n" +
             "  vec3 driftRgb=vec3(1.0)+0.10*vec3(sin(drift),sin(drift+2.0944),sin(drift+4.1888));\n" +
-            "  float fadeIn=smoothstep(0.0,10.0,uTime);\n" +
             "  col*=driftRgb;\n" +
             "  starSig*=driftRgb;\n" +
-            "  col*=fadeIn;\n" +
-            "  starSig*=fadeIn;\n" +
+            // Staggered arrival. One fade over everything dissolved the finished
+            // image up as a single flat image; separating the two makes the sky
+            // DEVELOP — the star field is up quickly, then the gas blooms in
+            // behind it. col currently holds gas + starSig, so subtracting
+            // starSig recovers the gas half exactly (both already carry the hue
+            // drift, so the split is drift-correct too).
+            "  float fadeStar=smoothstep(0.0,ARRIVE_STAR,uTime);\n" +
+            "  float fadeGas=smoothstep(ARRIVE_GAS_LO,ARRIVE_GAS_HI,uTime);\n" +
+            "  col=(col-starSig)*fadeGas+starSig*fadeStar;\n" +
+            "  starSig*=fadeStar;\n" +
             "  float pk=max(max(col.r,col.g),col.b);\n" +
             "  float luma=dot(col,vec3(0.30,0.40,0.30));\n" +
             // Bright gas desaturates toward its own luma: a hot emitter reads as
