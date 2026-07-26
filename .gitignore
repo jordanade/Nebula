@@ -9,3 +9,7 @@ screencaps/
 *.keystore
 .claude/settings.local.json
 nebula_preview.mp4
+
+# Maintainer notes — local only, never published
+APPEARANCE-IDEAS.md
+RELEASING.md

@@ -5,9 +5,12 @@ name: Sync F-Droid metadata mirror
 # bot updates upstream on its own schedule; this job keeps the in-repo
 # mirror in sync so releases need no manual follow-up visit.
 #
-# This workflow intentionally never builds or uploads anything — see the
-# v4.8.0 row in RELEASING.md's breakage table for why CI must not touch
-# release assets.
+# This workflow intentionally never builds or uploads anything, and no CI
+# workflow here may upload APK assets. In v4.8.0 a release.yml workflow
+# auto-created the GitHub release on tag push and attached a DEBUG-signed
+# APK, racing the maintainer's verified release-signed upload; F-Droid
+# rejects a build whose signer cert does not match. That workflow was
+# deleted 2026-07-04 and must not come back.
 
 on:
   schedule:
