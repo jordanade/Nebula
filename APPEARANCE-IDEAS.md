@@ -181,3 +181,171 @@ Stretch: steer the camera drift toward coverage (Java generated the
 noise, so Java can evaluate it and bias `ro` laterally toward denser
 sky) — would raise the rich-frame ratio without touching gains. Likely
 overkill if 4 lands. *(Still open.)*
+
+---
+
+# v4.11.1 review — 2026-07-26
+
+Eleven raw 4K grabs over ~4 min plus per-frame measurements, freshly
+installed 4.11.1 on the Shield, HDR active, gas scale 0.35-0.40, cadence
+21-24 fps. Same caveat as always: SDR grabs of HDR output, so highlight
+INTENSITY is unreliable — but highlight AREA is not, since a grab cannot
+hide a large bright region.
+
+## What the measurements said
+
+1. **The top of the range is empty in every frame.** Pixels above 60%
+   grey: 0.004-0.008% of the frame, i.e. ~400 of 8.3M. Above 30% grey:
+   under 0.3%. The one exception was the single frame that caught a
+   flare (0.020% / 0.76%). The scene's whole luminance hierarchy is
+   *star carpet, then nothing, then occasionally one flare* — no frame
+   has a bright AREA, only bright POINTS.
+2. **Coverage variance, not coverage, is the problem.** Share of the
+   frame carrying any gas at all ranged 25% -> 57% -> 96% across the
+   set. Widening `COV_LO` in 4.11.0 raised the average, but the sparse
+   frames still have no subject whatsoever, and they are common.
+3. **The gas has no negative structure.** Every element is additive.
+   Erosion carves isotropic Worley holes; nothing is ever *in front of*
+   the gas. The only thing that reads as dark is where gas isn't.
+
+Conclusion: what was missing was not gain or coverage. It was dust.
+The band already learned this in 4.9.0 ("the real band is defined as
+much by dust as by light") and the nebula never got the lesson.
+
+## Shipped 2026-07-26
+
+1. **Dust lanes.** A gaussian trough on the LOW end of the inverted-Worley
+   channel — the web of cell boundaries, a connected network of thin
+   sheets, which is the topology real dust lanes have. Free: it is the G
+   channel of the dust fetch the march already makes. Emission
+   suppression at every depth; extinction near-field only (see below).
+2. **Silhouette dust.** The macro forms never reached opacity and never
+   cut an edge. `DUST_BITE` takes the Worley from the same fetch to give
+   the form a cauliflower edge, the ramp is tighter (0.53..0.80 ->
+   0.53..0.72), occlusion is cubed instead of squared and extinction
+   goes 0.50 -> 1.10 — so the gain lands on the cores (which now black
+   out stars) while edges stay sheer. Cubing offsets the extinction rise
+   at mid densities almost exactly, so this is contrast, not fog.
+3. **Reflection nebulosity.** `starSig=T*bg` meant a star was only ever
+   OCCLUDED by gas, never lit it — two independent worlds stacked. The
+   top ~1% of stars by magnitude now throw a blue-white halo gated on
+   local column opacity. Blue because scattering is wavelength-dependent,
+   which is also why it puts a colour on screen the four-stop emission
+   palette cannot reach. Flares and novas scatter into their surrounding
+   cloud on the same term.
+4. **Camera steering** (the open stretch item from the 4.8.0 list). The
+   CPU trilinear-samples the same 64^3 buffer the GPU marches, scores a
+   look-ahead fan of candidate lateral offsets weighted by the marcher's
+   own distance falloff, and low-passes a drift toward the best. It
+   steers only when the current path scores below `DRIFT_ENOUGH`, so it
+   behaves as a FLOOR on scene richness rather than a target — steering
+   toward maximum density always would trade bare starfield for the flat
+   full-frame wash the contrast curve exists to suppress.
+
+   Two cascaded first-order lags do the smoothing: a proportional
+   controller sets the wanted lateral velocity (capped at `DRIFT_SPEED`)
+   and the actual velocity lags that over `DRIFT_TAU`. Moving the
+   position toward the target at a fixed rate — the first version — is
+   smooth in position but DISCONTINUOUS in velocity, so every time the
+   ring probe picked a new heading the lateral motion reversed instantly.
+   Verified on device: increments decelerate 0.09 -> 0.07 -> 0.04 -> 0.02
+   -> 0.01 into the target and reverse just as gently.
+
+   `DRIFT_ENOUGH`, not `DRIFT_MAX`, turned out to be the knob for how
+   much the camera roams: at 0.13 it cleared the bar and froze after ~2.3
+   units, far short of its 9-unit authority. At 0.17 a poor stretch
+   (score 0.007) had it travel out past 4.4 units and climb back.
+
+## Cost
+
++0.52 ms total against 4.11.1 on the Shield, measured with the ablation
+harness pinning seed, event RNG and gas scale, over 20 paired 2s windows
+(gas +0.18, comp +0.34 — the comp figure is not resolvable at this noise
+floor, where scene variation swings +-2.5 ms window to window; the gas
+figure is consistent and mechanistic). Free-running it holds the 25 fps
+cap at ~28 ms with the adaptive gas scale sitting at the 0.40 user
+maximum rather than flapping below it.
+
+Two comp-pass reductions went in alongside: the baked sky layer was
+fetched twice per pixel (once inside a branch, which also made it an
+implicit-LOD fetch in non-uniform control flow) and is now fetched once,
+and the previous epoch's bake is only fetched during the ~4s dissolve
+instead of every frame. Both are strict reductions by construction even
+though they sit under the noise floor.
+
+## Four things that were wrong first, and why
+
+- **An iso-surface trough on the value-fbm channel is not a lane.** Both
+  noise channels sit at p05=0.28 / p50=0.47 / p95=0.66 (sd ~0.12) — a
+  3-octave value fbm never approaches 0 or 1. A trough of half-width
+  0.10 therefore covered ~p15..p50 of the ENTIRE VOLUME and read as the
+  whole nebula dimming by half. The fix was not a tighter trough (that
+  becomes thinner than the step size and aliases) but a different
+  channel: both have the same distribution, so what makes the Worley
+  right is its TOPOLOGY — its low values are connected sheets, the fbm's
+  are disconnected blobs. `logNoisePercentiles` now logs both channels
+  every run; any threshold tuned against these fields without that in
+  hand is a guess.
+- **Ungated lane extinction is fog, not dust.** Integrated over the whole
+  40-unit march at mean laneAmt ~0.12 and d ~0.1 it reached an optical
+  depth of ~0.77 — about 2.4x the gas's own extinction — and collapsed
+  the mid-tone band ~3x. Now scaled by `nearAmt`. The split matters:
+  emission suppression everywhere gives structure, occlusion only up
+  close gives silhouettes, and beyond the near LOD there is nothing left
+  to silhouette against anyway.
+- **A per-pixel neighbourhood sum draws rectangles.** Summing an NxN cell
+  neighbourhood per pixel means the set of contributing stars changes
+  DISCONTINUOUSLY as a pixel crosses a cell boundary, so any kernel with
+  amplitude left at the neighbourhood edge tiles the sky with hard
+  rectangles (3x3 at K=1.2 did; 5x5 at K=1.6 was clean). Sources are now
+  picked on the CPU and passed as uniforms — the bigGalaxyVisible /
+  nova-overlay pattern — which removes the width constraint entirely.
+- **Moving the halo work to uniforms is only a win if the HASH moves
+  too.** The first CPU-gated cut passed the grid CELL and let the shader
+  resolve `h2(cell+3.7)`, so it still ran 16 hashes per pixel and
+  measured +0.30 ms *worse* than the per-pixel version it replaced. The
+  intra-cell offset is constant for a whole cycle; passing the resolved
+  grid POSITION instead is what makes the loop cheap.
+
+Also, on the first cut the halos were ~140 per frame at gas-level
+brightness (REFL_MAG 0.86, gain 0.55) and Jordan's verdict on the panel
+was "terrible" — twice. Rarity (top 1%), a veil-level gain (0.12), and a
+gate on VISIBLE rather than merely present gas are what made it read.
+Halos over sky that looks empty float with nothing to scatter off.
+
+## Still open, ranked by payoff-per-effort
+
+1. **Filamentary anisotropy.** Every density fetch is isotropic
+   (`p*0.062`, `p*0.22`, `p*0.58`), so every mass is the same cauliflower
+   at every scale — the same mathematical tell the constant-width band
+   gaussian was. Stretching the sample coordinate along a slowly-rotating
+   world axis and compressing it along `ldir` turns masses into streamers
+   and pillars with the bright front on the ionized side. One matrix
+   multiply on the coord, no new fetches. Biggest identity change
+   available for the least code.
+2. **One resolved landmark.** Frames without a flare still have nowhere
+   for the eye to land. A very rare globular cluster (radial hash-dot
+   swarm, unresolved bright core, resolving to grain at the rim) or open
+   cluster (a few hot blue stars with reflection nebulosity, which now
+   exists) on the galaxyBig CPU-gate pattern, so it costs nothing when
+   absent.
+3. **Stagger the arrival.** One 10s `fadeIn` currently ramps everything
+   together. Stars up over ~3s and gas blooming in behind them over ~12s
+   would make the sky *develop* rather than dissolve in.
+4. **Let it know what time it is.** Nothing reads the wall clock. Biasing
+   `tempBias` by hour — deep blue-violet after midnight, warmer in the
+   evening — is invisible in any one session and quietly uncanny across
+   many.
+5. **Binaries.** 1-2% of bright stars get a close companion with a
+   contrasting blackbody colour. Albireo is the best thing in a small
+   telescope, and it rewards anyone who walks up to the panel.
+6. **Live nebula behind the settings screen.** `SettingsActivity` is a
+   bare `PreferenceFragment`; the renderer behind a translucent list
+   would make the zoom and resolution sliders preview themselves.
+
+Open items from this pass: the flare/nova gas scatter (`EVENT_REFL`) is
+implemented but never verified on a flare firing INSIDE a mass — the one
+event the A/B caught was in thin gas and looked identical to baseline.
+And the adaptive gas scaler still flaps (0.38 -> 0.40 -> 0.37 -> 0.35 ->
+0.37 -> 0.36 -> 0.38 -> 0.40 in two minutes, seven FBO reallocations), so
+the 4.5 ms deadband is not holding at 25 fps.

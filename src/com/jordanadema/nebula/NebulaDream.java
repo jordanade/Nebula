@@ -200,6 +200,71 @@ public class NebulaDream extends DreamService {
         // grid and must stay in register with the composite pass's stars, so it
         // deliberately does not get this factor.
         static final float GAS_SPEED = 0.729f;
+
+        // ── Camera steering ──────────────────────────────────────────────
+        // The fly-through path was fully open-loop (two sines per axis plus
+        // forward motion), so what the camera flew past was pure luck. Measured
+        // over 11 grabs of 4.11.1: the share of the frame carrying any gas at
+        // all ranged 25% -> 96%. Widening the coverage gate in 4.11.0 raised the
+        // average, but it is the VARIANCE that is felt — the sparse frames have
+        // no subject at all.
+        //
+        // Java generated the noise, so Java can evaluate it: the CPU samples the
+        // same 64^3 buffer the GPU marches (same trilinear + REPEAT), scores a
+        // look-ahead fan of candidate lateral offsets, and low-passes a drift
+        // toward the best one. This is a BIAS, not a rail: DRIFT_MAX caps the
+        // authority at half a cloud feature and DRIFT_RATE is slow enough that
+        // the correction is invisible frame to frame (~30s to spend it all).
+        //
+        // It steers only when the current path is poor. Steering toward maximum
+        // density always would trade one failure (bare starfield) for the other
+        // (the flat full-frame wash that the emission-contrast curve exists to
+        // suppress), so above DRIFT_ENOUGH the camera is left alone.
+        // Authority: 9 units is ~2 cloud features, so the camera can genuinely
+        // choose a different mass rather than just lean toward one. (At 3.0 the
+        // ring probe saturated the cap almost immediately — the limit, not the
+        // field, was deciding where it went.)
+        private static final float DRIFT_MAX    = 9.0f;   // world units of lateral authority
+        // Speed: 0.055 units/s against 0.39 units/s of forward motion is about a
+        // 8-degree course offset, and it takes ~165s to spend the full authority.
+        private static final float DRIFT_SPEED  = 0.055f; // max lateral units/second
+        // Velocity lag. Moving the position toward the target at a fixed rate (the
+        // first version) is smooth in position but DISCONTINUOUS in velocity: each
+        // time the ring probe picks a different direction the lateral velocity
+        // reverses instantly, which is exactly the twitch to avoid. Lagging the
+        // velocity instead makes the path C1 — the camera leans into a new heading
+        // over ~25s. It also doubles as the proportional term's time constant, so
+        // the approach decelerates into the target rather than arriving at full
+        // speed and stopping dead.
+        private static final float DRIFT_TAU    = 25.0f;  // seconds
+        private static final float DRIFT_PERIOD = 2.0f;   // seconds between re-scores
+        private static final float DRIFT_PROBE  = 3.0f;   // ring radius per re-score
+        // A candidate must beat the current path by this factor to steal the
+        // target, so probe noise cannot set the camera oscillating between two
+        // near-equal headings.
+        private static final float DRIFT_MARGIN = 1.08f;
+        // Look-ahead mean density that needs no help. Calibrated against the
+        // logged score (see the cadence log): sessions run ~0.10-0.25, so 0.17
+        // sits somewhat above the middle and the camera hunts more often than
+        // not. Because steering freezes as soon as the score clears this, the
+        // constant behaves as a FLOOR on scene richness rather than a target.
+        //
+        // This — not DRIFT_MAX — is the knob for HOW MUCH the camera roams. At
+        // 0.13 it cleared the bar and froze after only ~2.3 units of travel,
+        // well short of its authority; the cap only binds if the bar is high
+        // enough to keep it hunting. Raise toward 0.25 for a camera that is
+        // almost always seeking, but expect it to spend more time inside dense
+        // gas, which is the flat-wash failure the contrast curve exists for.
+        private static final float DRIFT_ENOUGH = 0.17f;
+        // Look-ahead window along the ray, in world units. Starts past the
+        // camera-origin fade (1.45..2.9) and ends inside the near/mid LOD range,
+        // so it scores the gas that will actually be prominent rather than the
+        // far-field haze.
+        private static final float DRIFT_T0 = 4.0f;
+        private static final float DRIFT_T1 = 20.0f;
+        private static final int   DRIFT_STEPS = 8;
+        private static final int   DRIFT_DIRS  = 8;       // candidate offsets on a ring, plus centre
+
         private static final float L0_OX = 0.0f,  L0_OY = 0.0f;
         private static final float L1_OX = 0.37f, L1_OY = 0.21f;
         private static final float L0_PHASE = 0.0f, L1_PHASE = 0.5f;
@@ -285,6 +350,132 @@ public class NebulaDream extends DreamService {
 
         // Galaxy haze. 0.22 -> 0.242 (+10%).
         private static final float HAZE_MUL    = 0.242f;
+
+        // ── Dust: the nebula's NEGATIVE structure ────────────────────────
+        // Measured over 11 raw grabs of 4.11.1 (2026-07-26): 0.004-0.008% of
+        // each frame sits above 60% grey and under 0.3% above 30% — the top of
+        // the range is empty in every frame. Every element of the gas is
+        // ADDITIVE, so the only thing that ever reads as dark is where gas
+        // isn't. The band already learned this lesson (a smooth gaussian was
+        // the mathematical tell until a dark rift gave it structure); the
+        // nebula never got it. What is missing is not gain, it is dust.
+        //
+        // Lanes ride the LOW end of the inverted-Worley channel, which is the
+        // web of cell BOUNDARIES — a connected network of thin sheets, exactly
+        // the topology of real dust lanes. Free: it is the G channel of the
+        // dust fetch the march already makes.
+        //
+        // The first attempt was a gaussian trough on an iso-surface of the R
+        // (value fbm) channel, and it was wrong in a way worth recording: see
+        // logNoisePercentiles, both channels sit at p05=0.28 / p50=0.47 /
+        // p95=0.66, i.e. sd ~0.12 — a 3-octave value fbm never goes near 0 or
+        // 1. A trough of half-width 0.10 therefore covered roughly p15..p50 of
+        // the ENTIRE VOLUME. It read on screen as the whole nebula dimming by
+        // half, not as a lane. Thresholding value-space needs the field's
+        // distribution in hand; the two channels have the same distribution, so
+        // what makes G the right choice is not its spread but its TOPOLOGY:
+        // its low values are connected sheets, R's are disconnected blobs.
+        //
+        // At p*0.038 the Worley period-6 octave gives ~4.4-unit cells, so the
+        // LANE_LO..LANE_HI band (~p03..p27) is a sheet roughly 1.5 world units
+        // thick — several march steps, so it can't alias, and wide enough on
+        // screen to read as structure.
+        private static final float LANE_LO    = 0.26f;  // fully in-lane (~p03 of the field)
+        private static final float LANE_HI    = 0.40f;  // out of the lane (~p27)
+        private static final float LANE_DEPTH = 0.80f;  // emission suppressed at lane centre
+        // Lane extinction is scaled by LOCAL GAS DENSITY (dust traces gas, so a
+        // lane darkens the mass it crosses and never stripes empty sky) and by
+        // nearAmt, i.e. it applies only to the near field.
+        //
+        // The near-field gate is the important half. Ungated, this term is
+        // integrated over the whole 40-unit march: mean laneAmt ~0.12 at a
+        // typical d~0.1 gives ~0.019/unit, which over the full march is an
+        // optical depth of ~0.77 — roughly 2.4x the gas's OWN extinction
+        // (d*0.08). Measured as a ~3x collapse of the mid-tone band. That is
+        // global fog, not dust: a silhouette is a near-field effect, and beyond
+        // the near LOD there is nothing left to silhouette against.
+        //
+        // Emission suppression (LANE_DEPTH) stays ungated at every depth, so
+        // mid and far masses keep their dark veining without fogging the frame.
+        // That split — structure everywhere, occlusion only up close — is what
+        // makes lanes read as dust rather than as a dimmer.
+        private static final float LANE_EXT   = 1.20f;
+
+        // Silhouette dust. The macro dust forms were a broad smoothstep on a
+        // low-frequency field (0.53..0.80) with extinction 0.50 — they never
+        // reached opacity and never cut an edge, so they read as haze rather
+        // than as a shape. DUST_BITE takes the Worley from the G channel of the
+        // fetch the dust field ALREADY makes (free) to give the form a
+        // cauliflower edge; the tighter ramp and higher extinction let dense
+        // cores actually black out the stars behind them. DUST_POW cubes the
+        // occlusion so the gain lands on the cores and edges stay sheer —
+        // raising extinction alone would just fog the whole form.
+        //
+        // This also pays for itself: rays inside a dust core hit the T<0.07
+        // early-out sooner, so the march gets shorter where dust is thickest.
+        private static final float DUST_LO   = 0.53f;
+        private static final float DUST_HI   = 0.72f;   // was 0.80: tighter ramp = a readable edge
+        private static final float DUST_BITE = 0.18f;   // Worley bite from the same fetch's G channel
+        private static final float DUST_POW  = 3.0f;    // was 2.0 (squared): contrast, not fog
+        private static final float DUST_EXT  = 1.10f;   // was 0.50: dense cores occlude stars
+
+        // ── Reflection nebulosity ────────────────────────────────────────
+        // Stars and gas were two independent worlds: starSig=T*bg means a star
+        // is only ever OCCLUDED by the gas, never lights it. Real bright stars
+        // embedded in dust throw a blue-white reflection halo (M45, M78) —
+        // scattering is wavelength-dependent, which is why reflection nebulae
+        // are blue while emission nebulae are not. So this puts a colour on
+        // screen that the four-stop emission palette cannot reach, and it ties
+        // the two halves of the scene into one world.
+        //
+        // Drawn in the GAS pass, not the composite: the gas FBO is ~0.4x
+        // resolution, the bilinear upsample makes the halo soft for free, and the
+        // column opacity that gates it is already in hand there.
+        //
+        // The SOURCES are picked on the CPU and passed as uniforms — the same
+        // pattern as bigGalaxyVisible and the nova/flare overlays, and for the
+        // same two reasons. It cannot live in starLayer (whose per-cell
+        // evaluation clips anything wider than a cell), and the obvious
+        // alternative — summing a neighbourhood of cells per pixel — is both
+        // slower and fragile. That version shipped first and taught the lesson:
+        // a fixed NxN neighbourhood means the set of contributing stars changes
+        // DISCONTINUOUSLY as a pixel crosses a cell boundary, so any kernel with
+        // amplitude left at the neighbourhood edge draws hard rectangular tiles
+        // across the sky (5x5 at K=1.6 was clean, 3x3 at K=1.2 was not). It also
+        // measured +0.50 ms of gas pass for 2x25 hashes per pixel.
+        //
+        // Picking on the CPU removes the constraint entirely: the kernel is
+        // unclipped at any width, and the shader cost is one exp per source.
+        // Membership is chosen once per LAYER CYCLE, at the moment that layer's
+        // fade is still zero, so halos fade in with the layer and no source ever
+        // pops in or out mid-cycle. The visible cell box is largest at cycle
+        // start (the layer zooms IN over its cycle), so the set picked then
+        // covers everything the layer will show.
+        private static final float REFL_K    = 1.60f;  // halo falloff in grid units (sigma ~0.56 cell)
+        // Rarity: hm is uniform, so this is a percentile on the star population.
+        // 0.99 with the ~30% existence rate leaves ~10 in frame at zoom 1. At
+        // 0.86 (first cut) ~4% of all cells qualified — 140-odd halos, which read
+        // as bokeh, not as sky.
+        private static final float REFL_MAG  = 0.99f;
+        // Uniform slots, split as a fixed range per star layer so re-picking one
+        // layer at its cycle boundary cannot disturb the other's live halos.
+        // REFL_PER caps how many a single layer can show at once; a cycle that
+        // qualifies more keeps the brightest.
+        private static final int   REFL_PER  = 8;
+        private static final int   REFL_MAX  = REFL_PER * 2;
+        // A veil, not a light source. Bright gas peaks around 0.5-1.2 pre-tonemap,
+        // so the first cut at 0.55 put the halo in the same luminance class as the
+        // nebula itself and it dominated every frame.
+        private static final float REFL_GAIN = 0.12f;
+        // The halo must track VISIBLE gas, not merely present gas. Gating on raw
+        // column opacity > 0.02 lit up halos over sky that reads as empty, so they
+        // floated in blackness with nothing to scatter off. This ramp keeps them
+        // inside masses the eye can actually see.
+        private static final float REFL_OP_LO = 0.08f;
+        private static final float REFL_OP_HI = 0.35f;
+        // The rare events light their surroundings too: a flare or nova should
+        // flood the cloud it sits in, not just brighten one point.
+        private static final float EVENT_REFL = 0.90f;
 
         // Star-forming cores: the densest gas hearts bloom toward white-pink
         // and ride the HDR chain, giving frames a luminous focal point.
@@ -539,7 +730,26 @@ public class NebulaDream extends DreamService {
             "#define COV_HI "    + COV_HI    + "\n" +
             "#define CORE_GAIN "  + CORE_GAIN  + "\n" +
             "#define GAS_CONTRAST_FLOOR " + GAS_CONTRAST_FLOOR + "\n" +
-            "#define GAS_CONTRAST_KNEE "  + GAS_CONTRAST_KNEE  + "\n";
+            "#define GAS_CONTRAST_KNEE "  + GAS_CONTRAST_KNEE  + "\n" +
+            "#define LANE_LO "    + LANE_LO    + "\n" +
+            "#define LANE_HI "    + LANE_HI    + "\n" +
+            "#define LANE_DEPTH " + LANE_DEPTH + "\n" +
+            "#define LANE_EXT "   + LANE_EXT   + "\n" +
+            "#define DUST_LO "    + DUST_LO    + "\n" +
+            "#define DUST_HI "    + DUST_HI    + "\n" +
+            "#define DUST_BITE "  + DUST_BITE  + "\n" +
+            "#define DUST_POW "   + DUST_POW   + "\n" +
+            "#define DUST_EXT "   + DUST_EXT   + "\n" +
+            // Reflection nebulosity rides the composite pass's star grid, so the
+            // gas pass needs the layer phases/offsets. The star POPULATION
+            // constants are not needed here: the CPU picks the sources.
+            "#define REFL_K "     + REFL_K     + "\n" +
+            "#define REFL_GAIN "  + REFL_GAIN  + "\n" +
+            "#define REFL_MAX "   + REFL_MAX   + "\n" +
+            "#define REFL_OP_LO " + REFL_OP_LO + "\n" +
+            "#define REFL_OP_HI " + REFL_OP_HI + "\n" +
+            "#define L0_PHASE "   + L0_PHASE   + "\n" +
+            "#define L1_PHASE "   + L1_PHASE   + "\n";
 
         private static final String COMP_DEFS =
             "#define SD_FREQ_LO "  + SD_FREQ_LO  + "\n" +
@@ -593,7 +803,8 @@ public class NebulaDream extends DreamService {
             "#define FAR_STAR_DENS "  + FAR_STAR_DENS  + "\n" +
             "#define GAL_SMALL_THRESH " + GAL_SMALL_THRESH + "\n" +
             "#define GAL_BIG_THRESH " + GAL_BIG_THRESH + "\n" +
-            "#define GAL_BRI " + GAL_BRI + "\n";
+            "#define GAL_BRI " + GAL_BRI + "\n" +
+            "#define EVENT_REFL " + EVENT_REFL + "\n";
 
         private static final String VERT_ES3 =
             "#version 300 es\n" +
@@ -622,6 +833,12 @@ public class NebulaDream extends DreamService {
             "uniform float uZoom;\n" +      // star zoom speed (haze rides the star grid)
             "uniform float uStarScale;\n" + // grid-density scale (1.0 = reference width)
             "uniform vec2 uSeed;\n" +
+            // Lateral camera steering, low-passed on the CPU from a look-ahead
+            // score of the same noise field this pass marches. See DRIFT_MAX.
+            "uniform vec2 uDrift;\n" +
+            // Reflection-nebulosity sources, picked on the CPU once per star-layer
+            // cycle: xy = grid cell, z = magnitude (0 = empty slot), w = layer id.
+            "uniform vec4 uRefl[" + REFL_MAX + "];\n" +
             "uniform sampler3D uNoise;\n" + // R = value fbm, G = inverted Worley (billow)
             // 256x1 RGBA: per-frame CPU bake of the 1D along-band terms
             // (R=rift meander, G=rift depth noise, B=star-cloud amp noise,
@@ -633,6 +850,7 @@ public class NebulaDream extends DreamService {
             // pass; it rides the same zooming grid as the comp pass's stars so the
             // two read as one entity. ─────────────────────────────────────────────
             "float h1(vec2 i){ vec2 p=fract(i*vec2(0.1031,0.1030)); p+=dot(p,p+19.19); return fract(p.x*p.y); }\n" +
+            "vec2 h2(vec2 i){ vec2 p=fract(i*vec2(0.1031,0.1030)); p+=dot(p,p.yx+19.19); return fract((p.xx+p.yx)*p.xy); }\n" +
             "float vn(vec2 p){\n" +
             "  vec2 i=floor(p),f=fract(p);\n" +
             "  vec2 u=f*f*f*(f*(f*6.0-15.0)+10.0);\n" +
@@ -699,7 +917,10 @@ public class NebulaDream extends DreamService {
             "  vec2 uv=vUv*2.0-1.0; uv.x*=uRes.x/uRes.y;\n" +
             // Gas camera rides GAS_SPEED, not uZoom directly — see GAS_SPEED.
             "  float gz=uZoom*GAS_SPEED;\n" +
-            "  vec3 ro=vec3(sin(uTime*0.05*gz)*0.7+sin(uTime*0.0171*gz)*0.45+uSeed.x*50.0,cos(uTime*0.037*gz)*0.5+cos(uTime*0.0123*gz)*0.35+uSeed.y*50.0,uTime*0.40*gz+uSeed.x*37.0);\n" + // fly forward + gentle drift (off-axis)
+            // Fly forward + gentle drift (off-axis), plus the CPU's lateral
+            // steering bias. uDrift is low-passed at DRIFT_RATE, so it only ever
+            // bends the path — the open-loop sines still do all the visible work.
+            "  vec3 ro=vec3(sin(uTime*0.05*gz)*0.7+sin(uTime*0.0171*gz)*0.45+uSeed.x*50.0+uDrift.x,cos(uTime*0.037*gz)*0.5+cos(uTime*0.0123*gz)*0.35+uSeed.y*50.0+uDrift.y,uTime*0.40*gz+uSeed.x*37.0);\n" +
             "  vec3 rd=normalize(vec3(uv,1.5));\n" +
             "  vec3 ldir=normalize(vec3(0.55,0.5,-0.35));\n" +
             // nebula colour: v3.1's purple-centred 4-stop palette, driven by a
@@ -784,11 +1005,21 @@ public class NebulaDream extends DreamService {
             "#ifdef ABL_NO_DUST\n" +
             "    float dustD=0.0;\n" +
             "    float dustOcc=0.0;\n" +
+            "    float laneAmt=0.0;\n" +
             "#else\n" +
-            "    float dustMacro=smoothstep(0.53,0.80,texture(uNoise,p*0.038+vec3(6.3,1.7,0.0)).r);\n" +
+            // One fetch, three uses: R is the dust field, G is the Worley that
+            // bites its edge into cauliflower, and an iso-sheet of R at LANE_ISO
+            // is the dust lane. All free — this fetch was already here.
+            "    vec2 dmN=texture(uNoise,p*0.038+vec3(6.3,1.7,0.0)).rg;\n" +
+            "    float dustMacro=smoothstep(DUST_LO,DUST_HI,dmN.r-DUST_BITE*dmN.g);\n" +
             "    float nearDust=(1.0-smoothstep(4.0,12.0,t))*cameraFade;\n" +
             "    float dustD=dustMacro*nearDust*(0.38+0.50*frontBreak);\n" +
-            "    float dustOcc=dustD*dustD;\n" +
+            "    float dustOcc=pow(dustD,DUST_POW);\n" +
+            // Dust lane: the low end of the Worley channel, i.e. the web of cell
+            // boundaries. Unlike the macro forms above it is NOT distance-gated —
+            // lanes cross masses at every depth, which is what keeps a mid-
+            // distance mass from reading as one smooth blob.
+            "    float laneAmt=LANE_DEPTH*(1.0-smoothstep(LANE_LO,LANE_HI,dmN.g));\n" +
             "#endif\n" +
             "    if(d>0.01){\n" +
             "      float dt=0.11*g;\n" +
@@ -841,17 +1072,26 @@ public class NebulaDream extends DreamService {
             "        emit+=mix(tcol,vec3(1.0,0.86,0.96),0.65)*coreAmt*coreAmt*coreAmt*mix(0.12,1.0,coreGate)*mix(0.25,1.0,knot)*CORE_GAIN*(1.0-0.50*dustOcc);\n" +
             "      }\n" +
             "#endif\n" +
+            // Dust lane, applied LAST so it suppresses everything — body, rim,
+            // shell and core alike. Dust in front of a bright heart is exactly
+            // what makes the Horsehead read; a lane that only dimmed the body
+            // would leave the cores glowing through it.
+            "      emit*=1.0-laneAmt;\n" +
             // Distance falloff: deep gas contributes progressively less, so the
             // mid/rear stack reads as faint depth, not an accumulated bright wall.
             "      emit*=1.0/(1.0+t*0.055);\n" +
             "      col+=T*vec3(0.004,0.003,0.012)*dustD*dt;\n" +
             "      col+=T*emit*dt;\n" +
-            "      T*=exp(-(d*0.08+dustOcc*0.50)*dt);\n" +         // gas + visible foreground dust extinction
+            // Gas + foreground dust + lane extinction. The lane term is scaled by
+            // the local gas density so a lane occludes the mass it crosses (true
+            // silhouettes against the star field) and never stripes empty sky, and
+            // by nearAmt so it cannot integrate into global fog down the march.
+            "      T*=exp(-(d*0.08+dustOcc*DUST_EXT+laneAmt*d*LANE_EXT*nearAmt)*dt);\n" +
             "      t+=dt;\n" +
             "    } else if(dustD>0.015){\n" +
             "      float dt=0.11*g;\n" +
             "      col+=T*vec3(0.003,0.003,0.010)*dustD*dt;\n" +
-            "      T*=exp(-dustOcc*0.50*dt);\n" +
+            "      T*=exp(-dustOcc*DUST_EXT*dt);\n" +
             "      t+=dt;\n" +
             "    } else { t+=0.28*g; }\n" +
             "    dPrev=d;\n" +
@@ -870,6 +1110,12 @@ public class NebulaDream extends DreamService {
 
             // Galaxy haze + deep-space floor BEHIND the gas (same three-phase star
             // zoom as the comp pass, so haze and stars move as one entity).
+            // Screen-space star-grid basis. Hoisted out of the haze block: the
+            // reflection field below rides the same rotations (it must land on
+            // the composite pass's stars), and they are a few multiplies.
+            "  vec2 sc=vUv-0.5; sc.y*=uRes.y/uRes.x;\n" +
+            "  vec2 sr1=vec2(sc.x*0.951-sc.y*0.309, sc.x*0.309+sc.y*0.951);\n" +
+            "  vec2 sr2=vec2(sc.x*0.423-sc.y*0.906, sc.x*0.906+sc.y*0.423);\n" +
             "  vec3 hz=vec3(0.0);\n" +
             "#ifndef ABL_NO_HAZE\n" +
             "  float hzSP=SZ_SPEED*uZoom;\n" +
@@ -880,9 +1126,6 @@ public class NebulaDream extends DreamService {
             "  float f1=smoothstep(0.10,0.30,t1)*(1.0-smoothstep(0.70,0.90,t1));\n" +
             "  float f2=smoothstep(0.10,0.30,t2)*(1.0-smoothstep(0.70,0.90,t2));\n" +
             "  float f3=smoothstep(0.10,0.30,t3)*(1.0-smoothstep(0.70,0.90,t3));\n" +
-            "  vec2 sc=vUv-0.5; sc.y*=uRes.y/uRes.x;\n" +
-            "  vec2 sr1=vec2(sc.x*0.951-sc.y*0.309, sc.x*0.309+sc.y*0.951);\n" +
-            "  vec2 sr2=vec2(sc.x*0.423-sc.y*0.906, sc.x*0.906+sc.y*0.423);\n" +
             "  vec2 sr3=vec2(-sc.x*0.602-sc.y*0.799, sc.x*0.799-sc.y*0.602);\n" +
             "  hz+=hazeLayer(sr1/exp(t1*SZ_MAX)+0.5+uSeed,STAR_DEN*uStarScale,L0_OX,L0_OY)*f1;\n" +
             "  hz+=hazeLayer(sr2/exp(t2*SZ_MAX)+0.5+uSeed,STAR_DEN*uStarScale,L1_OX,L1_OY)*f2*0.85;\n" +
@@ -951,6 +1194,43 @@ public class NebulaDream extends DreamService {
             // the comp-pass grain gain so their balance is preserved. Further
             // trims ride BAND_BRI (the master scale) rather than this number.
             "  col+=T*mix(vec3(0.20,0.185,0.205),vec3(0.245,0.205,0.165),bulge)*bx*0.058*BAND_BRI;\n" +
+            "#endif\n" +
+            // ── Reflection nebulosity: bright stars light the gas they sit in.
+            // Blue-white, because scattering is wavelength-dependent — a colour
+            // the four-stop emission palette has no way to reach. Gated on the
+            // column opacity (1-T), so a halo exists only where there is gas in
+            // this column to scatter it: a bright star over empty sky stays a
+            // bare point, one inside a mass blooms. Added AFTER the march so the
+            // column it lights does not also attenuate it, and the opacity gate
+            // means empty sky skips the whole neighbourhood scan. ──────────────
+            "#ifndef ABL_NO_REFL\n" +
+            "  float opac=smoothstep(REFL_OP_LO,REFL_OP_HI,1.0-T);\n" +
+            "  if(opac>0.002){\n" +
+            "    float rSP=SZ_SPEED*uZoom;\n" +
+            "    float rt1=fract(uTime*rSP+L0_PHASE);\n" +
+            "    float rt2=fract(uTime*rSP+L1_PHASE);\n" +
+            "    float rf1=smoothstep(0.10,0.30,rt1)*(1.0-smoothstep(0.70,0.90,rt1));\n" +
+            "    float rf2=smoothstep(0.10,0.30,rt2)*(1.0-smoothstep(0.70,0.90,rt2));\n" +
+            "    vec2 rs1=sr1/exp(rt1*SZ_MAX)+0.5+uSeed;\n" +
+            "    vec2 rs2=sr2/exp(rt2*SZ_MAX)+0.5+uSeed;\n" +
+            "    float den=STAR_DEN*uStarScale;\n" +
+            "    float refl=0.0;\n" +
+            // One unclipped kernel per CPU-picked source, laid in grid units so the
+            // halo zooms with its layer — the nova overlay's construction. R.xy is
+            // already the star's grid POSITION (cell + intra-cell offset resolved
+            // on the CPU), so there is no hash in here. Empty slots carry z=0, and
+            // the test is on a uniform, so it is a real skip, not divergence.
+            "    vec2 gp1=rs1*den+vec2(L0_OX,L0_OY);\n" +
+            "    vec2 gp2=rs2*den+vec2(L1_OX,L1_OY);\n" +
+            "    for(int i=0;i<REFL_MAX;i++){\n" +
+            "      vec4 R=uRefl[i];\n" +
+            "      if(R.z<=0.0) continue;\n" +
+            "      bool l0=(R.w<0.5);\n" +
+            "      vec2 dgp=(l0?gp1:gp2)-R.xy;\n" +
+            "      refl+=exp(-dot(dgp,dgp)*REFL_K)*R.z*(l0?rf1:rf2);\n" +
+            "    }\n" +
+            "    col+=vec3(0.62,0.76,1.00)*refl*opac*REFL_GAIN;\n" +
+            "  }\n" +
             "#endif\n" +
             "  col+=T*hz;\n" +
             "  fragColor=vec4(col,T);\n" +
@@ -1317,8 +1597,13 @@ public class NebulaDream extends DreamService {
             // into uSky.a; the band structure (tint/rift/soft-knee) is re-applied
             // live here so it stays exact. Kept on the gas output path (added to
             // col), as it was before the sky layer.
+            // One fetch of the baked sky serves both uses below (grain in .a,
+            // sprinkles in .rgb). It was fetched twice, once inside the band
+            // branch — which also made it an implicit-LOD fetch in non-uniform
+            // control flow. Hoisted, it is one fetch and well-defined.
+            "  vec4 skyC=texture(uSky,vUv);\n" +
             "  if(band>0.02&&T>0.03){\n" +
-            "    float bgrain=texture(uSky,vUv).a;\n" +
+            "    float bgrain=skyC.a;\n" +
             "    vec3 bandCol=mix(vec3(0.20,0.185,0.205),vec3(0.245,0.205,0.165),bbulge);\n" +
             "    float cx=band*bbandAmp*brift*bgrain;\n" +
             "    cx/=1.0+max(cx-0.8,0.0)*0.5;\n" +
@@ -1335,7 +1620,11 @@ public class NebulaDream extends DreamService {
             // whole field to black to hide the jump (very visible once the band
             // is dense), cross-dissolve from the previous bake to the current
             // one. mix (not add) keeps total density constant through the blend.
-            "  bg+=mix(texture(uSkyPrev,vUv).rgb,texture(uSky,vUv).rgb,uSprBlend);\n" +
+            // uSprBlend is 1.0 except during the ~4s cross-dissolve at each ~40s
+            // epoch boundary, so the previous bake's full-res RGBA16F fetch is
+            // skipped on ~90% of frames. uSprBlend is a uniform, so the branch is
+            // frame-coherent — no divergence.
+            "  bg+=(uSprBlend>0.999)?skyC.rgb:mix(texture(uSkyPrev,vUv).rgb,skyC.rgb,uSprBlend);\n" +
             // NOVA: a once-per-session-scale event — one star swells to a
             // brilliant point over ~2s, holds, and fades over ~25s sliding
             // white -> amber. Rendered here as a screen-space overlay (NOT in
@@ -1368,6 +1657,11 @@ public class NebulaDream extends DreamService {
             "              +exp(-nd.x*nd.x*250.0)*exp(-nd.y*nd.y*0.16))*nv2*0.45;\n" +
             "    vec3 nCol=mix(vec3(1.00,0.97,0.92),vec3(1.00,0.70,0.42),uNovaP*uNovaP);\n" +
             "    bg+=nCol*(nCore+nGlow+nSp);\n" +
+            // The nova lights the cloud it sits in — the same blue-white scatter
+            // the gas pass gives ordinary bright stars, on the event's envelope.
+            // Rides col (the gas path), NOT bg, so the gas it illuminates does
+            // not then attenuate it.
+            "    col+=vec3(0.62,0.76,1.00)*exp(-r2*0.9)*nv2*(1.0-T)*EVENT_REFL;\n" +
             "  }\n" +
             // FLARE: same unclipped grid-space overlay as the nova (was drawn
             // inside starLayer, whose per-cell evaluation clipped spikes that
@@ -1420,6 +1714,10 @@ public class NebulaDream extends DreamService {
             "    vec3 fHot=mix(fc0,vec3(1.0),0.80);\n" +
             "    vec3 fCool=mix(fc0,vec3(0.55,0.70,1.00),0.50);\n" +
             "    bg+=(fHot*fCore + fc0*(fSp+fSp2) + fCool*fGlow)*vis;\n" +
+            // ...and so does the flare. This is what turns the burst from a
+            // bright point into an event with a neighbourhood: for its 4-8s the
+            // surrounding cloud lights up with it.
+            "    col+=vec3(0.62,0.76,1.00)*exp(-r2*1.6)*fv2*(1.0-T)*vis*EVENT_REFL;\n" +
             "  }\n" +
             "  vec3 starSig=T*bg;\n" +
             // (deep-space floor moved to the gas pass with the haze)
@@ -1615,7 +1913,8 @@ public class NebulaDream extends DreamService {
             "}\n";
 
         // Pass 1 (gas, low-res FBO): program + locations
-        private int progGas, gAPos, gUTime, gURes, gUNoise, gUZoom, gUSeed, gUStarScale, gUBandLut;
+        private int progGas, gAPos, gUTime, gURes, gUNoise, gUZoom, gUSeed, gUStarScale, gUBandLut,
+                    gUDrift;
         // Pass 2 (composite, native res): program + locations
         private int progComp, cAPos, cUTime, cURes, cUZoom, cUHdr, cUHdrKnee, cUHdrGain, cUHdrMax,
             cUHdrStarGain, cUHdrStarMax, cUStarFlare, cUSeed, cUGas, cUStarScale, cUBandLut, cUGalBigOn;
@@ -1641,6 +1940,261 @@ public class NebulaDream extends DreamService {
         private float nvStart = -1f, nvDur, nvMag, nvEnv, nvP, nvNext = -1f;
         private int nvLayer;
         private float nvCellX, nvCellY;
+
+        // ── Camera steering (see DRIFT_MAX) ──────────────────────────────
+        private float driftX, driftY;      // applied offset, low-passed toward the target
+        private float driftVX, driftVY;    // lateral velocity (lagged, see DRIFT_TAU)
+        private float driftTX, driftTY;    // target offset
+        private float driftNext;           // t of the next re-score
+        private float driftLastT = -1f;    // for the low-pass timestep
+        private float driftScore;          // last look-ahead score, for the cadence log
+
+        // Trilinear + REPEAT sample of the R channel of the same 64^3 buffer the
+        // gas pass marches. Matches GL's texel-centre convention (q*N - 0.5)
+        // exactly, so the CPU sees the field the GPU sees rather than an
+        // approximation of it — the whole point of steering from the real data.
+        private static float cpuNoiseR(float qx, float qy, float qz) {
+            ByteBuffer b = noiseBuf;
+            if (b == null) return 0.5f;
+            final int N = NOISE_N;
+            float fx = qx*N - 0.5f, fy = qy*N - 0.5f, fz = qz*N - 0.5f;
+            int x0 = (int)Math.floor(fx), y0 = (int)Math.floor(fy), z0 = (int)Math.floor(fz);
+            float wx = fx - x0, wy = fy - y0, wz = fz - z0;
+            float v = 0f;
+            for (int dz = 0; dz <= 1; dz++) {
+                float cz = (dz == 0) ? 1f - wz : wz;
+                int zz = noiseWrap(z0 + dz);
+                for (int dy = 0; dy <= 1; dy++) {
+                    float cy = (dy == 0) ? 1f - wy : wy;
+                    int yy = noiseWrap(y0 + dy);
+                    for (int dx = 0; dx <= 1; dx++) {
+                        float cx = (dx == 0) ? 1f - wx : wx;
+                        int xx = noiseWrap(x0 + dx);
+                        // RG8: two bytes per texel, R first (see buildNoiseTexture).
+                        int idx = ((zz*N + yy)*N + xx)*2;
+                        v += cx*cy*cz*((b.get(idx) & 0xFF)/255f);
+                    }
+                }
+            }
+            return v;
+        }
+        private static int noiseWrap(int i) { int m = i % NOISE_N; return (m < 0) ? m + NOISE_N : m; }
+
+        // The gas pass's dens() WITHOUT the erosion terms. Coverage x base is what
+        // decides whether a mass exists here at all, which is the only thing
+        // steering cares about; erosion sculpts a mass that already exists, and
+        // reproducing it would triple the sample cost for no change in the ranking.
+        private static float cpuGasDens(float px, float py, float pz) {
+            float base = cpuNoiseR(px*0.062f, py*0.062f, pz*0.062f);
+            float covN = cpuNoiseR(px*0.022f+0.31f, py*0.022f+0.31f, pz*0.022f+0.31f);
+            float cov = cpuSmoothstep(COV_LO, COV_HI, covN);
+            // Guarded divide: GLSL's rm() lets cov=0 produce Inf and clamps it
+            // away, but on the CPU base=1 with cov=0 is 0/0 = NaN, which would
+            // poison the score for the whole session.
+            float d = (cov > 1e-6f) ? clamp((base - (1f - cov)) / cov, 0f, 1f) * cov : 0f;
+            return (float)Math.pow(d, 1.8);
+        }
+        private static float cpuSmoothstep(float e0, float e1, float x) {
+            float u = clamp((x - e0) / (e1 - e0), 0f, 1f);
+            return u*u*(3f - 2f*u);
+        }
+
+        // Mean density the camera would fly through from a given origin, weighted
+        // by the same 1/(1+t*0.055) distance falloff the marcher applies — so the
+        // score ranks candidates by how much gas would actually be VISIBLE, not by
+        // how much is nominally out there. Sampled on the view axis plus four
+        // off-axis points per step, since what fills the frame is a cone.
+        private float pathScore(float ox, float oy, float oz) {
+            float sum = 0f, wsum = 0f;
+            for (int i = 0; i < DRIFT_STEPS; i++) {
+                float tt = DRIFT_T0 + (DRIFT_T1 - DRIFT_T0) * i / (float)(DRIFT_STEPS - 1);
+                float w = 1f / (1f + tt*0.055f);
+                float spread = 0.30f * tt;
+                float acc = cpuGasDens(ox, oy, oz + tt);
+                acc += cpuGasDens(ox + spread, oy, oz + tt);
+                acc += cpuGasDens(ox - spread, oy, oz + tt);
+                acc += cpuGasDens(ox, oy + spread, oz + tt);
+                acc += cpuGasDens(ox, oy - spread, oz + tt);
+                sum += w * acc * 0.2f;
+                wsum += w;
+            }
+            return (wsum > 0f) ? sum / wsum : 0f;
+        }
+
+        // Re-score once per DRIFT_PERIOD, then low-pass toward the target every
+        // frame. Ring-probe gradient ascent: eight candidate offsets around the
+        // current one, best wins. Above DRIFT_ENOUGH the path is already rich, and
+        // the target FREEZES rather than relaxing to zero — unwinding the bias
+        // would steer back out of the very mass it just found.
+        private void updateDrift(float t) {
+            if (noiseBuf == null || ablating) return; // harness: the scene must stay fixed
+            if (driftLastT < 0f) driftLastT = t;
+            if (t >= driftNext) {
+                driftNext = t + DRIFT_PERIOD;
+                float gz = zoomMul * GAS_SPEED;
+                // Camera origin WITHOUT the drift; candidates add their own.
+                float bx = (float)(Math.sin(t*0.05*gz)*0.7 + Math.sin(t*0.0171*gz)*0.45) + seedX*50f;
+                float by = (float)(Math.cos(t*0.037*gz)*0.5 + Math.cos(t*0.0123*gz)*0.35) + seedY*50f;
+                float bz = t*0.40f*gz + seedX*37f;
+                float cur = pathScore(bx + driftX, by + driftY, bz);
+                driftScore = cur;
+                if (cur >= DRIFT_ENOUGH) {
+                    driftTX = driftX; driftTY = driftY;
+                } else {
+                    // Require a margin over the current path, else keep the target.
+                    float bestS = cur * DRIFT_MARGIN, bestX = driftTX, bestY = driftTY;
+                    for (int i = 0; i < DRIFT_DIRS; i++) {
+                        double a = 2.0*Math.PI*i/DRIFT_DIRS;
+                        float cx = driftX + (float)Math.cos(a)*DRIFT_PROBE;
+                        float cy = driftY + (float)Math.sin(a)*DRIFT_PROBE;
+                        float m = (float)Math.sqrt(cx*cx + cy*cy);
+                        if (m > DRIFT_MAX) { cx *= DRIFT_MAX/m; cy *= DRIFT_MAX/m; }
+                        float s = pathScore(bx + cx, by + cy, bz);
+                        if (s > bestS) { bestS = s; bestX = cx; bestY = cy; }
+                    }
+                    driftTX = bestX; driftTY = bestY;
+                }
+            }
+            // Two cascaded first-order lags: a proportional controller sets the
+            // wanted velocity (capped at DRIFT_SPEED), and the actual velocity
+            // lags that. Position is then integrated. Smooth in both position and
+            // velocity, so no reachable target change can produce a visible jerk.
+            float dt = Math.max(0f, Math.min(0.5f, t - driftLastT));
+            driftLastT = t;
+            if (dt <= 0f) return;
+            float dx = driftTX - driftX, dy = driftTY - driftY;
+            float wantX = dx / DRIFT_TAU, wantY = dy / DRIFT_TAU;
+            float want = (float)Math.sqrt(wantX*wantX + wantY*wantY);
+            if (want > DRIFT_SPEED) {
+                float k = DRIFT_SPEED / want;
+                wantX *= k; wantY *= k;
+            }
+            float lag = Math.min(1f, dt / DRIFT_TAU);
+            driftVX += (wantX - driftVX) * lag;
+            driftVY += (wantY - driftVY) * lag;
+            driftX += driftVX * dt;
+            driftY += driftVY * dt;
+            // The velocity lag can carry the camera a little past its target; the
+            // authority cap is on position, so enforce it after integrating.
+            float m = (float)Math.sqrt(driftX*driftX + driftY*driftY);
+            if (m > DRIFT_MAX) {
+                float k = DRIFT_MAX / m;
+                driftX *= k; driftY *= k;
+            }
+        }
+
+        // ── Reflection-nebulosity sources (see REFL_K) ───────────────────
+        // xyzw per slot: star position in GRID UNITS, magnitude, layer id.
+        //
+        // The position is the cell plus its intra-cell hash offset, resolved on
+        // the CPU. Passing the raw cell instead means the shader must evaluate
+        // h2(cell+3.7) for every source at every pixel — 16 hashes per pixel,
+        // which measured +0.30 ms against the per-pixel version this replaced,
+        // i.e. it gave back the entire saving and then some. The offset is
+        // constant for the whole cycle; there is no reason for the GPU to know
+        // the hash at all.
+        //
+        // Layer L owns slots
+        // [L*REFL_PER, (L+1)*REFL_PER), so re-picking one layer never touches the
+        // other's live halos.
+        private final float[] reflData = new float[REFL_MAX * 4];
+        private final int[] reflCycle = { Integer.MIN_VALUE, Integer.MIN_VALUE };
+        private int gURefl;
+
+        // Re-pick a layer's sources when it rolls into a new zoom cycle. At that
+        // moment its fade weight is still 0 (smoothstep(0.10,0.30,~0)), so the new
+        // set fades in with the layer rather than appearing; and because the layer
+        // zooms IN across its cycle, the cell box now is the largest it will be,
+        // so this set covers everything the layer can show before it fades out.
+        private void updateRefl(float t) {
+            float sph = t * SZ_SPEED * zoomMul;
+            for (int L = 0; L < LAYER_OFF.length; L++) {
+                int cyc = (int) Math.floor(sph + LAYER_PHASE[L]);
+                if (cyc == reflCycle[L]) continue;
+                reflCycle[L] = cyc;
+                pickRefl(L, cpuFract(sph + LAYER_PHASE[L]));
+            }
+        }
+
+        // Scan the layer's visible cell box for stars that are bright enough AND
+        // actually exist, keeping the REFL_PER brightest. The box comes from the
+        // four screen corners mapped through the shader's own transform, exactly
+        // as bigGalaxyVisible does; the mapping is affine, so the corners' bounding
+        // box provably contains every visible cell.
+        private void pickRefl(int layer, float zoomPhase) {
+            int base = layer * REFL_PER * 4;
+            for (int i = 0; i < REFL_PER; i++) reflData[base + i*4 + 2] = 0f; // clear magnitudes
+            if (screenW <= 0 || screenH <= 0) return;
+            float ox = LAYER_OFF[layer][0], oy = LAYER_OFF[layer][1];
+            float ca = (layer == 0) ? 0.951f : 0.423f;
+            float sa = (layer == 0) ? 0.309f : 0.906f;
+            float den = STAR_DEN * starScale;
+            float zoom = (float) Math.exp(zoomPhase * SZ_MAX);
+            float aspect = (float) screenH / screenW;
+            float minX = Float.MAX_VALUE, maxX = -Float.MAX_VALUE;
+            float minY = Float.MAX_VALUE, maxY = -Float.MAX_VALUE;
+            for (int i = 0; i < 4; i++) {
+                float scx = ((i & 1) == 0 ? -0.5f : 0.5f);
+                float scy = ((i & 2) == 0 ? -0.5f : 0.5f) * aspect;
+                float srx = ca * scx - sa * scy;
+                float sry = sa * scx + ca * scy;
+                float gpx = (srx / zoom + 0.5f + seedX) * den + ox;
+                float gpy = (sry / zoom + 0.5f + seedY) * den + oy;
+                minX = Math.min(minX, gpx); maxX = Math.max(maxX, gpx);
+                minY = Math.min(minY, gpy); maxY = Math.max(maxY, gpy);
+            }
+            int c0x = (int) Math.floor(minX), c1x = (int) Math.floor(maxX);
+            int c0y = (int) Math.floor(minY), c1y = (int) Math.floor(maxY);
+            int found = 0;
+            for (int cy = c0y; cy <= c1y; cy++) {
+                for (int cx = c0x; cx <= c1x; cx++) {
+                    // One hash rejects ~99% of cells before the density field.
+                    if (cpuH1(cx + 7.7f, cy + 7.7f) < REFL_MAG) continue;
+                    if (!cpuHasStar(cx, cy, ox, oy)) continue;
+                    float mag = cpuStarMag(cx, cy);
+                    int slot;
+                    if (found < REFL_PER) {
+                        slot = found++;
+                    } else {
+                        // Full: replace the dimmest, and only if this beats it.
+                        int dim = 0;
+                        float dimMag = Float.MAX_VALUE;
+                        for (int i = 0; i < REFL_PER; i++) {
+                            float m = reflData[base + i*4 + 2];
+                            if (m < dimMag) { dimMag = m; dim = i; }
+                        }
+                        if (mag <= dimMag) continue;
+                        slot = dim;
+                    }
+                    cpuH2(cx + 3.7f, cy + 3.7f, h2Tmp); // starLayer's intra-cell offset
+                    int o = base + slot*4;
+                    reflData[o]     = cx + h2Tmp[0];
+                    reflData[o + 1] = cy + h2Tmp[1];
+                    reflData[o + 2] = mag;
+                    reflData[o + 3] = layer;
+                }
+            }
+            Log.i(TAG, "REFL layer=" + layer + " cycle=" + reflCycle[layer]
+                + " sources=" + Math.min(found, REFL_PER)
+                + " box=" + (c1x-c0x+1) + "x" + (c1y-c0y+1));
+        }
+
+        private final float[] h2Tmp = new float[2];
+        // CPU mirror of the shaders' h2(). Fills out[] to avoid allocating on the
+        // GL thread. Must stay in lock-step with the GLSL:
+        //   p=fract(i*(0.1031,0.1030)); p+=dot(p,p.yx+19.19);
+        //   return fract((p.xx+p.yx)*p.xy)
+        // where dot(p,p.yx+19.19) = 2*p.x*p.y + 19.19*(p.x+p.y), and the swizzles
+        // expand to ((p.x+p.y)*p.x, 2*p.x*p.y).
+        private static void cpuH2(float ix, float iy, float[] out) {
+            float px = cpuFract(ix * 0.1031f);
+            float py = cpuFract(iy * 0.1030f);
+            float d = 2f*px*py + 19.19f*(px + py);
+            px += d;
+            py += d;
+            out[0] = cpuFract((px + py) * px);
+            out[1] = cpuFract(2f * px * py);
+        }
 
         private static float cpuFract(float x) { return x - (float)Math.floor(x); }
         private static float cpuH1(float ix, float iy) {
@@ -1833,6 +2387,11 @@ public class NebulaDream extends DreamService {
             gUSeed  = GLES20.glGetUniformLocation(progGas,"uSeed");
             gUStarScale = GLES20.glGetUniformLocation(progGas,"uStarScale");
             gUBandLut = GLES20.glGetUniformLocation(progGas,"uBandLut");
+            gUDrift = GLES20.glGetUniformLocation(progGas,"uDrift");
+            gURefl = GLES20.glGetUniformLocation(progGas,"uRefl");
+            // Sources are picked per layer cycle; a new GL context must not wait
+            // up to a full cycle (~70s) for its halos to reappear.
+            reflCycle[0] = Integer.MIN_VALUE; reflCycle[1] = Integer.MIN_VALUE;
 
             progComp = buildProg(VERT_ES3, ablate(FRAG_COMP));
             cAPos    = GLES20.glGetAttribLocation(progComp,"aPos");
@@ -1866,7 +2425,7 @@ public class NebulaDream extends DreamService {
             skUSeed     = GLES20.glGetUniformLocation(progSky,"uSeed");
             skUBandLut  = GLES20.glGetUniformLocation(progSky,"uBandLut");
 
-            noiseTex = buildNoiseTexture(64); // re-upload each context (ids go stale); CPU gen is cached
+            noiseTex = buildNoiseTexture(NOISE_N); // re-upload each context (ids go stale); CPU gen is cached
             int[] lutId = new int[1];
             GLES20.glGenTextures(1, lutId, 0);
             bandLutTex = lutId[0];
@@ -1992,6 +2551,8 @@ public class NebulaDream extends DreamService {
                     +" surface="+screenW+"x"+screenH
                     +" gas="+gasW+"x"+gasH
                     +" gasScale="+String.format("%.2f",gasScaleActive)
+                    +" drift="+String.format("%.2f,%.2f",driftX,driftY)
+                    +" score="+String.format("%.4f",driftScore)
                     +" hdr="+(hdr!=null&&hdr.hdrActive)
                     +" activeMode="+((display==null)?"unknown":display.activeMode())
                     +" requestedMode="+((display==null)?"none":display.requestedMode)
@@ -2051,6 +2612,10 @@ public class NebulaDream extends DreamService {
             GLES20.glUniform1f(gUZoom,zoomMul);
             GLES20.glUniform1f(gUStarScale,starScale);
             GLES20.glUniform2f(gUSeed,seedX,seedY);
+            updateDrift(t);
+            GLES20.glUniform2f(gUDrift,driftX,driftY);
+            updateRefl(t);
+            GLES20.glUniform4fv(gURefl,REFL_MAX,reflData,0);
             GLES20.glActiveTexture(GLES20.GL_TEXTURE0);
             GLES30.glBindTexture(GLES30.GL_TEXTURE_3D,noiseTex);
             GLES20.glUniform1i(gUNoise,0);
@@ -2380,6 +2945,7 @@ public class NebulaDream extends DreamService {
         // Worley billow). Generated once on the CPU (cached buffer), uploaded with
         // glTexImage3D + REPEAT so the volume tiles seamlessly. Replacing analytic
         // noise with fetches removes the marcher's ALU cost uniformly. ─────────────
+        private static final int NOISE_N = 64;
         private static ByteBuffer noiseBuf; // cached across context recreations
 
         private static float hashN(int x,int y,int z){
@@ -2442,6 +3008,16 @@ public class NebulaDream extends DreamService {
                     }
                 }
                 Log.i(TAG,"3D noise "+N+"^3 generated in "+(SystemClock.elapsedRealtime()-t0)+"ms");
+                // Percentiles of both channels. Worth logging permanently: any
+                // threshold or iso-level tuned against these fields is meaningless
+                // without knowing how they are actually DISTRIBUTED, and guessing
+                // wrong is expensive. The R fbm is tightly clustered around its
+                // mean (3-octave value noise, so it never approaches 0 or 1) —
+                // a "narrow" gaussian trough in R's value space is in fact a
+                // large fraction of the whole volume. G (inverted Worley) spreads
+                // far wider and is the channel to threshold when you want a thin,
+                // connected, spatially-extended feature.
+                logNoisePercentiles(noiseBuf, N);
             }
             noiseBuf.position(0);
             int[] tex=new int[1];
@@ -2456,6 +3032,29 @@ public class NebulaDream extends DreamService {
             GLES30.glTexParameteri(GLES30.GL_TEXTURE_3D,GLES30.GL_TEXTURE_WRAP_R,GLES20.GL_REPEAT);
             return tex[0];
         }
+        // 256-bin histogram of each channel, reported as percentiles.
+        private static void logNoisePercentiles(ByteBuffer buf, int N) {
+            int n = N*N*N;
+            int[][] hist = new int[2][256];
+            for (int i = 0; i < n; i++) {
+                hist[0][buf.get(i*2) & 0xFF]++;
+                hist[1][buf.get(i*2+1) & 0xFF]++;
+            }
+            float[] pct = {0.01f, 0.05f, 0.25f, 0.50f, 0.75f, 0.95f, 0.99f};
+            for (int c = 0; c < 2; c++) {
+                StringBuilder sb = new StringBuilder(c == 0 ? "noise R fbm  " : "noise G worley ");
+                int acc = 0, p = 0;
+                for (int b = 0; b < 256 && p < pct.length; b++) {
+                    acc += hist[c][b];
+                    while (p < pct.length && acc >= pct[p]*n) {
+                        sb.append(String.format("p%02d=%.3f ", (int)(pct[p]*100), b/255f));
+                        p++;
+                    }
+                }
+                Log.i(TAG, sb.toString());
+            }
+        }
+
         private int shader(int type,String src){
             int s=GLES20.glCreateShader(type);
             GLES20.glShaderSource(s,src);
