@@ -122,11 +122,20 @@ case "$signing_mode" in
         fi
 
         set -- --ks "$RELEASE_KEYSTORE" --ks-key-alias "$RELEASE_KEY_ALIAS"
+        # Pass the passwords by ENV NAME, not inline. apksigner's pass:<value>
+        # form puts the signing-key password in the process's argv, where any
+        # same-user process can read it off `ps` for as long as signing runs.
+        # env:<name> keeps it in the environment, which is not world-readable.
+        # The explicit exports matter: env: resolves in apksigner's own
+        # environment, so a value that reached this script as a plain shell
+        # variable (rather than an env-var prefix) would not be visible to it.
         if [ -n "${RELEASE_KEYSTORE_PASS:-}" ]; then
-            set -- "$@" --ks-pass "pass:$RELEASE_KEYSTORE_PASS"
+            export RELEASE_KEYSTORE_PASS
+            set -- "$@" --ks-pass "env:RELEASE_KEYSTORE_PASS"
         fi
         if [ -n "${RELEASE_KEY_PASS:-}" ]; then
-            set -- "$@" --key-pass "pass:$RELEASE_KEY_PASS"
+            export RELEASE_KEY_PASS
+            set -- "$@" --key-pass "env:RELEASE_KEY_PASS"
         fi
 
         "$APKSIGNER" sign --alignment-preserved true "$@" --out "$out_apk" "$bin_dir/nebula.aligned.apk"
