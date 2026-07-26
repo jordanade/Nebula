@@ -313,33 +313,76 @@ was "terrible" — twice. Rarity (top 1%), a veil-level gain (0.12), and a
 gate on VISIBLE rather than merely present gas are what made it read.
 Halos over sky that looks empty float with nothing to scatter off.
 
+- **Do not warp the COVERAGE frequency.** Anisotropy shipped the same day
+  (below) and the first cut warped both mass-defining fetches. Coverage
+  runs at 0.022, a ~45-unit period against a 48-unit march, so stretching
+  it 2.2x to ~100 units put the entire marched volume inside one coverage
+  blob or outside all of them. Per-frame coverage went bimodal — 99% and
+  29%, against 49% and 62% for the isotropic build — which is the flat
+  full-frame wash at one end and bare starfield at the other, i.e. it made
+  the exact variance problem this review opened with strictly worse.
+  Coverage decides WHERE masses exist; anisotropy belongs on their FORM.
+  Restricting the warp to the base billow brought the distribution back in
+  line (means 54% vs 56%).
+
+## Also shipped 2026-07-26: filamentary anisotropy
+
+Every density fetch sampled the volume with a uniform scale on all three
+axes, so the field had no preferred direction at any octave — which is
+exactly why the gas read as cauliflower, round lumps with round lumps on
+them. Real interstellar gas is threaded by magnetic fields that collapse
+it into filaments and eroded by winds that come FROM a direction, so it is
+full of streamers, edge-on sheets and aligned pillars; direction is most
+of what makes those images read as structure rather than fog. Same class
+of tell as the band's constant-width gaussian.
+
+The noise is untouched — only the lookup coordinate is. Compressing the
+coordinate along an axis elongates the sampled features along it, so this
+is one dot and one multiply-add per warped coordinate and no new fetch.
+Measured within noise (gas -0.20 ms, i.e. content variation).
+
+Three deliberate scope limits, each load-bearing:
+- **Base billow and dust only.** Not coverage (above), and not the Worley
+  erosion at 0.22/0.58 — detail breaking ACROSS the filaments is what
+  stops them looking extruded.
+- **Axis is frame-uniform and CPU-side.** A fixed world axis reads as a
+  comb; deriving two angles from a very-low-frequency read of the noise AT
+  THE CAMERA means the filament direction changes as the camera crosses
+  field domains (~250-unit domains, minutes apart at cruise), and costs
+  the GPU nothing. Lagged over 60s so it can never swing — and snapped on
+  the first frame, because lagging up from the initial axis would shear the
+  whole field during the fade-in of every session.
+- **The relief step is pre-corrected for it.** Relief differences densFar
+  along `ldir`, and in a warped field the warped length of that step
+  depends on dot(ldir,axis) — so relief would quietly fade whenever the
+  filaments happened to align with the light. Warp is linear and both
+  vectors are frame-uniform, so `ldir*(RELIEF_STEP/|warp(ldir)|)` is a
+  single CPU calculation that holds relief sensitivity constant at every
+  orientation.
+
+Verified on an identical scene via the new `ABL_NO_FIL` guard: the
+isotropic build's rounded lump becomes a diagonal streamer with a defined
+ridge and directional grain, with dark space preserved either side.
+
 ## Still open, ranked by payoff-per-effort
 
-1. **Filamentary anisotropy.** Every density fetch is isotropic
-   (`p*0.062`, `p*0.22`, `p*0.58`), so every mass is the same cauliflower
-   at every scale — the same mathematical tell the constant-width band
-   gaussian was. Stretching the sample coordinate along a slowly-rotating
-   world axis and compressing it along `ldir` turns masses into streamers
-   and pillars with the bright front on the ionized side. One matrix
-   multiply on the coord, no new fetches. Biggest identity change
-   available for the least code.
-2. **One resolved landmark.** Frames without a flare still have nowhere
+1. **One resolved landmark.** Frames without a flare still have nowhere
    for the eye to land. A very rare globular cluster (radial hash-dot
    swarm, unresolved bright core, resolving to grain at the rim) or open
    cluster (a few hot blue stars with reflection nebulosity, which now
    exists) on the galaxyBig CPU-gate pattern, so it costs nothing when
    absent.
-3. **Stagger the arrival.** One 10s `fadeIn` currently ramps everything
+2. **Stagger the arrival.** One 10s `fadeIn` currently ramps everything
    together. Stars up over ~3s and gas blooming in behind them over ~12s
    would make the sky *develop* rather than dissolve in.
-4. **Let it know what time it is.** Nothing reads the wall clock. Biasing
+3. **Let it know what time it is.** Nothing reads the wall clock. Biasing
    `tempBias` by hour — deep blue-violet after midnight, warmer in the
    evening — is invisible in any one session and quietly uncanny across
    many.
-5. **Binaries.** 1-2% of bright stars get a close companion with a
+4. **Binaries.** 1-2% of bright stars get a close companion with a
    contrasting blackbody colour. Albireo is the best thing in a small
    telescope, and it rewards anyone who walks up to the panel.
-6. **Live nebula behind the settings screen.** `SettingsActivity` is a
+5. **Live nebula behind the settings screen.** `SettingsActivity` is a
    bare `PreferenceFragment`; the renderer behind a translucent list
    would make the zoom and resolution sliders preview themselves.
 

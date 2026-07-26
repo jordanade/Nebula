@@ -419,6 +419,55 @@ public class NebulaDream extends DreamService {
         private static final float DUST_POW  = 3.0f;    // was 2.0 (squared): contrast, not fog
         private static final float DUST_EXT  = 1.10f;   // was 0.50: dense cores occlude stars
 
+        // ── Filamentary anisotropy ───────────────────────────────────────
+        // Every density fetch sampled the volume with a uniform scale on all
+        // three axes, so the field had no preferred direction at any octave —
+        // which is precisely why the gas read as cauliflower: round lumps with
+        // round lumps on them. Real interstellar gas is threaded by magnetic
+        // fields that collapse it into filaments and sculpted by winds that
+        // erode it FROM a direction, so it is full of streamers, edge-on sheets
+        // and aligned pillars. Direction is most of what makes those images read
+        // as structure rather than fog. Same class of tell as the band's
+        // constant-width gaussian was.
+        //
+        // The noise is untouched; only the lookup coordinate changes. Compressing
+        // the coordinate along an axis by FIL_S elongates the sampled features
+        // along it by the same factor — no extra fetch, no change to the density
+        // statistics, one dot and one multiply-add per warped coordinate.
+        //
+        // Applied to the BASE billow (0.062) and the dust field only. Two
+        // deliberate exclusions:
+        //
+        // The Worley erosion (0.22/0.58) stays isotropic because detail breaking
+        // ACROSS the filaments is what keeps them from looking extruded.
+        //
+        // The COVERAGE gate (0.022) stays isotropic because warping it was
+        // measured to be actively wrong. Its period is ~45 world units against a
+        // 48-unit march, so stretching it 2.2x to ~100 units meant the whole
+        // marched volume fell inside one coverage blob or outside all of them:
+        // coverage per frame went bimodal at 99% and 29% where the isotropic
+        // build sat at 49% and 62%. Coverage decides WHERE masses exist and is a
+        // separate lever from what they look like (the same distinction 4.11.0
+        // recorded when widening COV_LO); anisotropy belongs on mass FORM.
+        private static final float FIL_S = 2.20f;   // coordinate compression = feature elongation
+        // The axis is frame-uniform and computed on the CPU, so the shader pays
+        // nothing to vary it. A fixed world axis would read as a comb; deriving it
+        // from a very-low-frequency read of the noise AT THE CAMERA means the
+        // filament direction changes as the camera traverses field domains. The
+        // read frequency gives ~250-unit domains, i.e. minutes apart at cruise.
+        private static final float FIL_AXIS_FREQ = 0.004f;
+        // Long lag on the axis so it can never swing. The field shape shears as
+        // the axis turns, so this is also what keeps that shear imperceptible.
+        private static final float FIL_AXIS_TAU  = 60.0f;
+        // Relief sensitivity must not depend on the filament direction. The relief
+        // term differences densFar along ldir, and in a warped field the warped
+        // length of that step varies with dot(ldir,axis) — so relief would fade
+        // whenever the filaments happened to align with the light. Since warp is
+        // linear and both vectors are frame-uniform, the corrected step
+        // ldir*(RELIEF_STEP/|warp(ldir)|) is a single CPU calculation that holds
+        // the warped separation constant at every orientation.
+        private static final float RELIEF_STEP = 0.34f; // was inline as ldir*0.34
+
         // ── Reflection nebulosity ────────────────────────────────────────
         // Stars and gas were two independent worlds: starSig=T*bg means a star
         // is only ever OCCLUDED by the gas, never lights it. Real bright stars
@@ -731,6 +780,7 @@ public class NebulaDream extends DreamService {
             "#define CORE_GAIN "  + CORE_GAIN  + "\n" +
             "#define GAS_CONTRAST_FLOOR " + GAS_CONTRAST_FLOOR + "\n" +
             "#define GAS_CONTRAST_KNEE "  + GAS_CONTRAST_KNEE  + "\n" +
+            "#define FIL_S "      + FIL_S      + "\n" +
             "#define LANE_LO "    + LANE_LO    + "\n" +
             "#define LANE_HI "    + LANE_HI    + "\n" +
             "#define LANE_DEPTH " + LANE_DEPTH + "\n" +
@@ -836,6 +886,10 @@ public class NebulaDream extends DreamService {
             // Lateral camera steering, low-passed on the CPU from a look-ahead
             // score of the same noise field this pass marches. See DRIFT_MAX.
             "uniform vec2 uDrift;\n" +
+            // Filament direction (unit), and the relief finite-difference step
+            // pre-corrected for it. Both frame-uniform; see FIL_S / RELIEF_STEP.
+            "uniform vec3 uFilAxis;\n" +
+            "uniform vec3 uReliefStep;\n" +
             // Reflection-nebulosity sources, picked on the CPU once per star-layer
             // cycle: xy = grid cell, z = magnitude (0 = empty slot), w = layer id.
             "uniform vec4 uRefl[" + REFL_MAX + "];\n" +
@@ -866,10 +920,23 @@ public class NebulaDream extends DreamService {
             "  return gcol*glow*glow*HAZE_MUL;\n" +
             "}\n" +
             "float rm(float v,float l,float h){ return clamp((v-l)/(h-l),0.0,1.0); }\n" +
+            // Filament warp: compress the lookup coordinate along uFilAxis, which
+            // elongates the sampled features along it. Linear, so the marcher's
+            // finite differences stay meaningful (see uReliefStep).
+            "vec3 fw(vec3 p){\n" +
+            "#ifdef ABL_NO_FIL\n" +
+            "  return p;\n" +
+            "#else\n" +
+            "  return p+uFilAxis*(dot(p,uFilAxis)*(1.0/FIL_S-1.0));\n" +
+            "#endif\n" +
+            "}\n" +
                         // ── Phase 3: density from the precomputed 3D noise TEXTURE (uniform, no
             // analytic noise / branching) — R=value fbm, G=inverted Worley billow. ──
             "float dens(vec3 p){\n" +
-            "  float base=texture(uNoise,p*0.062).r;\n" +             // larger billow base
+            // Mass FORM rides the warped coordinate; the coverage gate and the
+            // erosion below deliberately do not. See FIL_S.
+            "  vec3 q=fw(p);\n" +
+            "  float base=texture(uNoise,q*0.062).r;\n" +             // larger billow base
             // Coverage: low-frequency gate makes fewer, larger cloud masses while
             // still rejecting the weakest saddles between them.
             "  float cov=smoothstep(COV_LO,COV_HI,texture(uNoise,p*0.022+0.31).r);\n" +
@@ -890,7 +957,8 @@ public class NebulaDream extends DreamService {
             // for readable cloud edges but drops the fine ero2 term (p*0.58) whose
             // sub-pixel detail aliases into shimmer at this range.
             "float densMid(vec3 p){\n" +
-            "  float base=texture(uNoise,p*0.062).r;\n" +
+            "  vec3 q=fw(p);\n" +
+            "  float base=texture(uNoise,q*0.062).r;\n" +
             "  float cov=smoothstep(COV_LO,COV_HI,texture(uNoise,p*0.022+0.31).r);\n" +
             "  float d=rm(base,1.0-cov,1.0)*cov;\n" +
             "  float ero=texture(uNoise,p*0.22).g;\n" +
@@ -905,7 +973,8 @@ public class NebulaDream extends DreamService {
             // Low-freq coords are also cache-friendly — big strides were thrashing
             // the texture cache with the full 4-fetch dens().
             "float densFar(vec3 p){\n" +
-            "  float base=texture(uNoise,p*0.062).r;\n" +
+            "  vec3 q=fw(p);\n" +
+            "  float base=texture(uNoise,q*0.062).r;\n" +
             "  float cov=smoothstep(COV_LO,COV_HI,texture(uNoise,p*0.022+0.31).r);\n" +
             "  float d=rm(base,1.0-cov,1.0)*cov;\n" +
             "  d=rm(d,0.18,1.0);\n" +                                // approximate the erosion's average bite
@@ -1010,7 +1079,11 @@ public class NebulaDream extends DreamService {
             // One fetch, three uses: R is the dust field, G is the Worley that
             // bites its edge into cauliflower, and an iso-sheet of R at LANE_ISO
             // is the dust lane. All free — this fetch was already here.
-            "    vec2 dmN=texture(uNoise,p*0.038+vec3(6.3,1.7,0.0)).rg;\n" +
+            // Warped too: real dust lanes are elongated, and stretching the Worley
+            // web turns the lane network from a roughly isotropic honeycomb into
+            // long lanes. Since lanes are the main dark structure, this is arguably
+            // the bigger half of the anisotropy's payoff.
+            "    vec2 dmN=texture(uNoise,fw(p)*0.038+vec3(6.3,1.7,0.0)).rg;\n" +
             "    float dustMacro=smoothstep(DUST_LO,DUST_HI,dmN.r-DUST_BITE*dmN.g);\n" +
             "    float nearDust=(1.0-smoothstep(4.0,12.0,t))*cameraFade;\n" +
             "    float dustD=dustMacro*nearDust*(0.38+0.50*frontBreak);\n" +
@@ -1031,7 +1104,9 @@ public class NebulaDream extends DreamService {
             "      if(nearAmt>0.001){\n" +
             "        float frontDetail=smoothstep(0.34,0.82,texture(uNoise,p*0.085+vec3(9.1,3.8,uTime*0.003)).r);\n" +
             "        float ds=densFar(p);\n" +
-            "        float dlit=densFar(p+ldir*0.34);\n" +
+            // uReliefStep is ldir scaled so the WARPED separation is constant
+            // whatever the filament direction — see RELIEF_STEP.
+            "        float dlit=densFar(p+uReliefStep);\n" +
             "        float lit=clamp((ds-dlit)*9.0,0.0,1.0);\n" +
             // Softened directional relief: an emission nebula glows from within
             // and has no true sunlit/shadowed side, so this is only a faint depth
@@ -1980,12 +2055,94 @@ public class NebulaDream extends DreamService {
         }
         private static int noiseWrap(int i) { int m = i % NOISE_N; return (m < 0) ? m + NOISE_N : m; }
 
+        // ── Filament axis (see FIL_S) ────────────────────────────────────
+        // Frame-uniform, so the GPU pays nothing to vary it. Held as a unit vector
+        // and lagged toward a target derived from the noise at the camera, so it
+        // turns over minutes and never swings.
+        private static float filAX = 1f, filAY = 0f, filAZ = 0f;
+        private boolean filSnap = true;   // first frame: adopt the axis, don't lag into it
+        private float filLastT = -1f;
+        private int gUFilAxis, gUReliefStep;
+        private final float[] reliefStep = new float[3];
+        // ldir, duplicated from the shader's main(). Must stay in lock-step.
+        private static final float[] LDIR = normalized(0.55f, 0.5f, -0.35f);
+
+        private final float[] camTmp = new float[3];
+        // The gas camera origin WITHOUT the steering offset (callers add driftX/Y
+        // themselves). Mirrors the shader's ro construction; must stay in
+        // lock-step with it.
+        private void camPos(float t, float[] out) {
+            float gz = zoomMul * GAS_SPEED;
+            out[0] = (float)(Math.sin(t*0.05*gz)*0.7 + Math.sin(t*0.0171*gz)*0.45) + seedX*50f;
+            out[1] = (float)(Math.cos(t*0.037*gz)*0.5 + Math.cos(t*0.0123*gz)*0.35) + seedY*50f;
+            out[2] = t*0.40f*gz + seedX*37f;
+        }
+
+        private static float[] normalized(float x, float y, float z) {
+            float m = (float)Math.sqrt(x*x + y*y + z*z);
+            return new float[]{ x/m, y/m, z/m };
+        }
+
+        private void updateFilAxis(float t, float rox, float roy, float roz) {
+            if (filLastT < 0f) filLastT = t;
+            float dt = Math.max(0f, Math.min(0.5f, t - filLastT));
+            filLastT = t;
+            // Two angles from a very-low-frequency read at the camera position.
+            // Elevation is kept off the poles so the axis never degenerates.
+            float n1 = cpuNoiseR(rox*FIL_AXIS_FREQ, roy*FIL_AXIS_FREQ, roz*FIL_AXIS_FREQ);
+            float n2 = cpuNoiseR(rox*FIL_AXIS_FREQ+0.37f, roy*FIL_AXIS_FREQ+0.37f,
+                                 roz*FIL_AXIS_FREQ+0.37f);
+            double az = n1 * 2.0 * Math.PI;
+            double el = (n2 - 0.5) * Math.PI * 0.6;
+            float tx = (float)(Math.cos(el)*Math.cos(az));
+            float ty = (float)(Math.cos(el)*Math.sin(az));
+            float tz = (float)Math.sin(el);
+            // Snap on the first frame. Lagging from the initial (1,0,0) would shear
+            // the whole field over the first FIL_AXIS_TAU seconds of every session
+            // — visible as the nebula changing shape while it fades in.
+            float lag = filSnap ? 1f : Math.min(1f, dt / FIL_AXIS_TAU);
+            filSnap = false;
+            filAX += (tx - filAX) * lag;
+            filAY += (ty - filAY) * lag;
+            filAZ += (tz - filAZ) * lag;
+            float m = (float)Math.sqrt(filAX*filAX + filAY*filAY + filAZ*filAZ);
+            if (m > 1e-5f) { filAX /= m; filAY /= m; filAZ /= m; }
+
+            // Relief step, pre-corrected so its WARPED length is RELIEF_STEP at
+            // any orientation. warp is linear, so for o = k*ldir the warped length
+            // is k*|warp(ldir)|, and |warp(ldir)|^2 = 1 + c^2*(1/S^2 - 1) with
+            // c = dot(ldir, axis).
+            float c = LDIR[0]*filAX + LDIR[1]*filAY + LDIR[2]*filAZ;
+            float inv = 1f / FIL_S;
+            float wLen = (float)Math.sqrt(Math.max(1e-4f, 1f + c*c*(inv*inv - 1f)));
+            float k = RELIEF_STEP / wLen;
+            reliefStep[0] = LDIR[0]*k; reliefStep[1] = LDIR[1]*k; reliefStep[2] = LDIR[2]*k;
+        }
+
+        // CPU mirror of the shader's fw(). The steering scores the field the GPU
+        // actually marches, so it must warp identically or it ranks candidate paths
+        // against a differently-shaped nebula than the one on screen.
+        private static float warpX(float x, float y, float z) {
+            float d = x*filAX + y*filAY + z*filAZ;
+            return x + filAX*(d*(1f/FIL_S - 1f));
+        }
+        private static float warpY(float x, float y, float z) {
+            float d = x*filAX + y*filAY + z*filAZ;
+            return y + filAY*(d*(1f/FIL_S - 1f));
+        }
+        private static float warpZ(float x, float y, float z) {
+            float d = x*filAX + y*filAY + z*filAZ;
+            return z + filAZ*(d*(1f/FIL_S - 1f));
+        }
+
         // The gas pass's dens() WITHOUT the erosion terms. Coverage x base is what
         // decides whether a mass exists here at all, which is the only thing
         // steering cares about; erosion sculpts a mass that already exists, and
         // reproducing it would triple the sample cost for no change in the ranking.
         private static float cpuGasDens(float px, float py, float pz) {
-            float base = cpuNoiseR(px*0.062f, py*0.062f, pz*0.062f);
+            float qx = warpX(px, py, pz), qy = warpY(px, py, pz), qz = warpZ(px, py, pz);
+            float base = cpuNoiseR(qx*0.062f, qy*0.062f, qz*0.062f);
+            // Coverage stays isotropic here too — see FIL_S.
             float covN = cpuNoiseR(px*0.022f+0.31f, py*0.022f+0.31f, pz*0.022f+0.31f);
             float cov = cpuSmoothstep(COV_LO, COV_HI, covN);
             // Guarded divide: GLSL's rm() lets cov=0 produce Inf and clamps it
@@ -2031,11 +2188,9 @@ public class NebulaDream extends DreamService {
             if (driftLastT < 0f) driftLastT = t;
             if (t >= driftNext) {
                 driftNext = t + DRIFT_PERIOD;
-                float gz = zoomMul * GAS_SPEED;
                 // Camera origin WITHOUT the drift; candidates add their own.
-                float bx = (float)(Math.sin(t*0.05*gz)*0.7 + Math.sin(t*0.0171*gz)*0.45) + seedX*50f;
-                float by = (float)(Math.cos(t*0.037*gz)*0.5 + Math.cos(t*0.0123*gz)*0.35) + seedY*50f;
-                float bz = t*0.40f*gz + seedX*37f;
+                camPos(t, camTmp);
+                float bx = camTmp[0], by = camTmp[1], bz = camTmp[2];
                 float cur = pathScore(bx + driftX, by + driftY, bz);
                 driftScore = cur;
                 if (cur >= DRIFT_ENOUGH) {
@@ -2389,6 +2544,8 @@ public class NebulaDream extends DreamService {
             gUBandLut = GLES20.glGetUniformLocation(progGas,"uBandLut");
             gUDrift = GLES20.glGetUniformLocation(progGas,"uDrift");
             gURefl = GLES20.glGetUniformLocation(progGas,"uRefl");
+            gUFilAxis = GLES20.glGetUniformLocation(progGas,"uFilAxis");
+            gUReliefStep = GLES20.glGetUniformLocation(progGas,"uReliefStep");
             // Sources are picked per layer cycle; a new GL context must not wait
             // up to a full cycle (~70s) for its halos to reappear.
             reflCycle[0] = Integer.MIN_VALUE; reflCycle[1] = Integer.MIN_VALUE;
@@ -2614,6 +2771,12 @@ public class NebulaDream extends DreamService {
             GLES20.glUniform2f(gUSeed,seedX,seedY);
             updateDrift(t);
             GLES20.glUniform2f(gUDrift,driftX,driftY);
+            // Filament axis reads the noise at the camera, so it needs the steered
+            // position, i.e. after updateDrift.
+            camPos(t, camTmp);
+            updateFilAxis(t, camTmp[0]+driftX, camTmp[1]+driftY, camTmp[2]);
+            GLES20.glUniform3f(gUFilAxis,filAX,filAY,filAZ);
+            GLES20.glUniform3fv(gUReliefStep,1,reliefStep,0);
             updateRefl(t);
             GLES20.glUniform4fv(gURefl,REFL_MAX,reflData,0);
             GLES20.glActiveTexture(GLES20.GL_TEXTURE0);
