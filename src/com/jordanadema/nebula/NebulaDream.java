@@ -608,6 +608,36 @@ public class NebulaDream extends DreamService {
         private static final float ARRIVE_GAS_LO = 2.0f;
         private static final float ARRIVE_GAS_HI = 14.0f;
 
+        // Arrival flight: the gas should GROW on the way in, not just brighten in
+        // place. Note the obvious implementation does not work — scaling the
+        // sample distance (p = ro+rd*t*k, k easing 3->1) changes nothing, because
+        // the transverse ray spread scales with the same t, so the cone sampled at
+        // parameter t is exactly the normal march's cone at k*t. Perspective is
+        // preserved and all it does is march deeper; likewise for scaling the noise
+        // frequency about the camera. In a homogeneous infinite field, "the field
+        // is scaled" and "I marched further" are the same operation. Apparent size
+        // only grows by actually closing distance on the masses that are there.
+        //
+        // So: start the camera ARRIVE_BACK units BEHIND its nominal path and let it
+        // catch up over ARRIVE_FLIGHT. Expressed as a decaying position offset
+        // rather than a speed multiplier, because the offset converges to exactly
+        // zero — the path afterwards is bit-identical to having never done this,
+        // so nothing downstream inherits a permanent skew. (1-s)^2 puts the extra
+        // speed at its maximum at t=0, 2*BACK/FLIGHT ~ 1.3 units/s on top of the
+        // nominal 0.39, decaying linearly to nothing.
+        // Walked down from 12/18, where the initial speed was 4.4x nominal —
+        // chosen for restraint, since this app's motion is deliberately calm
+        // everywhere else. 8 over 20s is 3.0x nominal and spends about one cloud
+        // feature, which is enough for the growth to read (verified in a timed
+        // capture sequence) without a rush.
+        //
+        // NOT evidence-based: coverage peaked ~14s then fell by half in both
+        // variants, which looks like flying through the mass and out the far side
+        // — but unsteered baseline runs swing 25%-96% on their own, so that fall
+        // is within ordinary path variation and this was never isolated.
+        private static final float ARRIVE_BACK   = 8.0f;   // world units of catch-up
+        private static final float ARRIVE_FLIGHT = 20.0f;  // seconds to spend it
+
         private static final float SDR_BLACK = 0.01f;
         private static final float SDR_CONTRAST = 1.04f;
         // Star HDR ramp scale. The star boost curve saturates almost as soon as a
@@ -796,6 +826,8 @@ public class NebulaDream extends DreamService {
             "#define GAS_CONTRAST_FLOOR " + GAS_CONTRAST_FLOOR + "\n" +
             "#define GAS_CONTRAST_KNEE "  + GAS_CONTRAST_KNEE  + "\n" +
             "#define FIL_S "      + FIL_S      + "\n" +
+            "#define ARRIVE_BACK "   + ARRIVE_BACK   + "\n" +
+            "#define ARRIVE_FLIGHT " + ARRIVE_FLIGHT + "\n" +
             "#define LANE_LO "    + LANE_LO    + "\n" +
             "#define LANE_HI "    + LANE_HI    + "\n" +
             "#define LANE_DEPTH " + LANE_DEPTH + "\n" +
@@ -1007,7 +1039,11 @@ public class NebulaDream extends DreamService {
             // Fly forward + gentle drift (off-axis), plus the CPU's lateral
             // steering bias. uDrift is low-passed at DRIFT_RATE, so it only ever
             // bends the path — the open-loop sines still do all the visible work.
-            "  vec3 ro=vec3(sin(uTime*0.05*gz)*0.7+sin(uTime*0.0171*gz)*0.45+uSeed.x*50.0+uDrift.x,cos(uTime*0.037*gz)*0.5+cos(uTime*0.0123*gz)*0.35+uSeed.y*50.0+uDrift.y,uTime*0.40*gz+uSeed.x*37.0);\n" +
+            // Arrival flight: start ARRIVE_BACK behind the nominal path and close
+            // it, so the masses ahead grow on the way in. Converges to exactly 0.
+            "  float as=min(1.0,uTime/ARRIVE_FLIGHT);\n" +
+            "  float aback=ARRIVE_BACK*(1.0-as)*(1.0-as);\n" +
+            "  vec3 ro=vec3(sin(uTime*0.05*gz)*0.7+sin(uTime*0.0171*gz)*0.45+uSeed.x*50.0+uDrift.x,cos(uTime*0.037*gz)*0.5+cos(uTime*0.0123*gz)*0.35+uSeed.y*50.0+uDrift.y,uTime*0.40*gz+uSeed.x*37.0-aback);\n" +
             "  vec3 rd=normalize(vec3(uv,1.5));\n" +
             "  vec3 ldir=normalize(vec3(0.55,0.5,-0.35));\n" +
             // nebula colour: v3.1's purple-centred 4-stop palette, driven by a
@@ -2100,7 +2136,11 @@ public class NebulaDream extends DreamService {
             float gz = zoomMul * GAS_SPEED;
             out[0] = (float)(Math.sin(t*0.05*gz)*0.7 + Math.sin(t*0.0171*gz)*0.45) + seedX*50f;
             out[1] = (float)(Math.cos(t*0.037*gz)*0.5 + Math.cos(t*0.0123*gz)*0.35) + seedY*50f;
-            out[2] = t*0.40f*gz + seedX*37f;
+            // Arrival flight, mirrored from the shader — the steering and the
+            // filament axis both read the field AT the camera, so a CPU that
+            // disagrees about where the camera is scores the wrong place.
+            float as = Math.min(1f, t / ARRIVE_FLIGHT);
+            out[2] = t*0.40f*gz + seedX*37f - ARRIVE_BACK*(1f-as)*(1f-as);
         }
 
         private static float[] normalized(float x, float y, float z) {

@@ -388,6 +388,39 @@ Only witnessed on a manual start, or when the dream begins with someone in
 the room; the real payoff is the on-device Preview button, i.e. first
 impressions.
 
+### The nebula should also GROW on the way in, not just brighten
+
+Jordan's follow-up: shouldn't it begin as a far-away thing and expand?
+Yes — and the obvious implementation provably does nothing, which is the
+part worth recording.
+
+Scaling the gas sample distance (`p = ro+rd*t*k`, k easing 3->1) changes
+NOTHING about apparent size. The transverse ray spread scales with the same
+`t`, so the cone sampled at parameter t is exactly the normal march's cone
+at k*t: perspective is preserved and all that happens is the march goes
+deeper. Scaling the noise frequency about the camera is the same operation
+in disguise. In a homogeneous infinite field, "the field is scaled" and "I
+marched further" are not two things. Apparent size only grows by actually
+closing distance on the masses that are there.
+
+So the camera starts ARRIVE_BACK units BEHIND its nominal path and catches
+up over ARRIVE_FLIGHT, expressed as a decaying POSITION offset rather than
+a speed multiplier — the offset converges to exactly zero, so the path
+afterwards is bit-identical to never having done it and nothing downstream
+inherits a permanent skew. `(1-s)^2` puts the extra speed at maximum at
+t=0 and decays it linearly to nothing.
+
+Walked 12/18 -> 8/20 (4.4x -> 3.0x initial speed) for restraint; the
+growth still reads in a timed capture sequence. Coverage peaked ~14s and
+fell by half afterwards in both variants, which LOOKS like flying through
+the mass and out the far side — but unsteered baselines swing 25%-96% on
+their own, so that was never isolated and should not be treated as a
+finding.
+
+Mirrored in the CPU's camPos: steering and the filament axis both read the
+field AT the camera, so a CPU that disagrees about where the camera is
+scores the wrong place.
+
 ## Still open, ranked by payoff-per-effort
 
 1. **One resolved landmark.** Frames without a flare still have nowhere
